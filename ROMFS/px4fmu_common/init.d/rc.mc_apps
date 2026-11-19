@@ -32,6 +32,12 @@ mc_hover_thrust_estimator start
 flight_mode_manager start
 mc_pos_control start
 
+# Per-sector speed caps of the collision prevention; started only when CPB_EN is 1.
+if param greater -s CPB_EN 0
+then
+	cp_brake start
+fi
+
 #
 # Start Multicopter Land Detector.
 #

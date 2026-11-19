@@ -1,0 +1,5 @@
+menuconfig MODULES_CP_BRAKE
+	bool "cp_brake"
+	default n
+	---help---
+		Enable support for cp_brake, the per-sector speed caps of the collision prevention
