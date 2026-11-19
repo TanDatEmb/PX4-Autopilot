@@ -75,8 +75,8 @@ TEST(CapLimiterTest, EverySectorStartsAtZero)
 {
 	CapLimiter limiter(fixture());
 
-	for (const float cap : limiter.caps()) {
-		EXPECT_EQ(cap, 0.f);
+	for (std::size_t i = 0; i < kSectorCount; ++i) {
+		EXPECT_EQ(limiter.caps()[i], 0.f);
 	}
 }
 

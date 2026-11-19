@@ -34,7 +34,7 @@
 #include "StoppingModel.hpp"
 
 #include <cmath>
-#include <limits>
+#include <cstdint>
 
 namespace cp_brake
 {
@@ -110,7 +110,7 @@ float speedCap(float usable_range_m, const StoppingParams &params)
 float sectorSpeedCap(uint16_t wire_cm, uint16_t min_cm, uint16_t max_cm, float travelled_toward_m,
 		     const StoppingParams &params)
 {
-	constexpr uint16_t kUnknown{std::numeric_limits<uint16_t>::max()};
+	constexpr uint16_t kUnknown{UINT16_MAX};
 	constexpr float kCentimetresPerMetre{100.f};
 
 	// the clear marker max_cm + 1 must stay distinct from 0 (too close) and UINT16_MAX (unknown)
