@@ -57,6 +57,8 @@ void LoggedTopics::add_default_topics()
 	add_topic("cellular_status", 200);
 	add_topic("commander_state");
 	add_topic("config_overrides");
+	add_topic("cp_brake_constraints");
+	add_topic("cp_brake_status");
 	add_topic("cpuload");
 	add_topic("distance_sensor_mode_change_request");
 	add_topic_multi("dronecan_node_status", 250);

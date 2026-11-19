@@ -75,8 +75,8 @@ TEST(CapLimiterTest, EverySectorStartsAtZero)
 {
 	CapLimiter limiter(fixture());
 
-	for (const float cap : limiter.caps()) {
-		EXPECT_EQ(cap, 0.f);
+	for (std::size_t i = 0; i < kSectorCount; ++i) {
+		EXPECT_EQ(limiter.caps()[i], 0.f);
 	}
 }
 
@@ -209,4 +209,52 @@ TEST(CapLimiterTest, InvalidInputsCanOnlyTighten)
 	}
 
 	EXPECT_EQ(limiter.update(rawAll(nan), validAll(), kDt)[0], 0.f);
+}
+
+TEST(CapLimiterTest, SampleStepIsTheTimeBetweenSamplesWithinTheAgeLimit)
+{
+	EXPECT_FLOAT_EQ(sampleStep(1000000U, 1050000U, 0.5f), 0.05f);
+	EXPECT_FLOAT_EQ(sampleStep(1000000U, 1400000U, 0.5f), 0.4f);
+}
+
+TEST(CapLimiterTest, SampleStepHasNoStepWithoutAUsableInterval)
+{
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+
+	EXPECT_LT(sampleStep(0U, 1050000U, 0.5f), 0.f);        // no previous sample
+	EXPECT_LT(sampleStep(1050000U, 1050000U, 0.5f), 0.f);  // time did not advance
+	EXPECT_LT(sampleStep(1050000U, 1000000U, 0.5f), 0.f);  // time went back
+	EXPECT_LT(sampleStep(1000000U, 1600000U, 0.5f), 0.f);  // longer than the age limit
+	EXPECT_LT(sampleStep(1000000U, 4000000U, 0.5f), 0.f);
+
+	for (const float bad_limit : {0.f, -0.5f, nan}) {
+		EXPECT_LT(sampleStep(1000000U, 1050000U, bad_limit), 0.f);
+	}
+}
+
+TEST(CapLimiterTest, AGapLongerThanTheAgeLimitDoesNotRaiseACap)
+{
+	CapLimiter limiter(fixture());
+	const SectorCaps raw = rawAll(10.f);
+	uint64_t now_us = 1000000U;
+
+	for (int i = 0; i < 30; ++i) { // 1.5 s of data at 20 Hz
+		const uint64_t previous_us = now_us;
+		now_us += 50000U;
+		limiter.update(raw, validAll(), sampleStep(previous_us, now_us, 0.5f));
+	}
+
+	const float before = limiter.caps()[0];
+	EXPECT_GT(before, 0.f);
+	EXPECT_LT(before, 10.f);
+
+	// no data for 3 s, then a clear map: the gap gave no supporting data, so nothing rises
+	const uint64_t previous_us = now_us;
+	now_us += 3000000U;
+	EXPECT_EQ(limiter.update(raw, validAll(), sampleStep(previous_us, now_us, 0.5f))[0], before);
+
+	// the dwell starts again: no rise for 0.2 s of data, then the normal rate
+	EXPECT_EQ(limiter.update(raw, validAll(), kDt)[0], before);
+	EXPECT_EQ(limiter.update(raw, validAll(), kDt)[0], before);
+	EXPECT_NEAR(limiter.update(raw, validAll(), kDt)[0], before + 0.2f, 1e-5f);
 }

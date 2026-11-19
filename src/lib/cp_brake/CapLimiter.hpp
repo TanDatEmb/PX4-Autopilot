@@ -42,16 +42,35 @@
 
 #pragma once
 
-#include <array>
 #include <cstddef>
+#include <cstdint>
 
 namespace cp_brake
 {
 
 constexpr std::size_t kSectorCount{72};
 
-using SectorCaps = std::array<float, kSectorCount>;
-using SectorFlags = std::array<bool, kSectorCount>;
+/**
+ * One value per sector. Not std::array: the NuttX builds of PX4 have no <array>, and this library
+ * is built for them.
+ */
+template <typename T>
+struct SectorArray {
+	T values[kSectorCount];
+
+	T &operator[](std::size_t i) { return values[i]; }
+	const T &operator[](std::size_t i) const { return values[i]; }
+
+	void fill(const T &value)
+	{
+		for (std::size_t i = 0; i < kSectorCount; ++i) {
+			values[i] = value;
+		}
+	}
+};
+
+using SectorCaps = SectorArray<float>;
+using SectorFlags = SectorArray<bool>;
 
 struct LimiterParams {
 	float dwell_s;      ///< continuous time of supporting data before a cap may rise [s], >= 0
@@ -59,6 +78,15 @@ struct LimiterParams {
 };
 
 bool isValid(const LimiterParams &params);
+
+/**
+ * Time step [s] to give CapLimiter::update from the times of two accepted samples [us], or -1 when
+ * there is no usable step: no previous sample, a time that did not advance, an age limit that is
+ * not a positive number, or a gap longer than age_limit_s. A gap that long gave no supporting
+ * data, so it must not count as dwell or as time to rise: the limiter then only tightens and its
+ * dwell starts again.
+ */
+float sampleStep(uint64_t previous_us, uint64_t current_us, float age_limit_s);
 
 class CapLimiter
 {
@@ -79,7 +107,7 @@ public:
 private:
 	LimiterParams _params;
 	SectorCaps _caps{};
-	std::array<float, kSectorCount> _dwell_s{};
+	float _dwell_s[kSectorCount] {};
 };
 
 } // namespace cp_brake

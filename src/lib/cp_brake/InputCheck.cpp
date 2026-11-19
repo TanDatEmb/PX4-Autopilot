@@ -34,7 +34,7 @@
 #include "InputCheck.hpp"
 
 #include <cmath>
-#include <limits>
+#include <cstdint>
 
 #include "ReasonFlags.hpp"
 
@@ -65,7 +65,7 @@ uint32_t checkObstacleInput(const ObstacleInput &input)
 		return flags; // the sectors cannot be read
 	}
 
-	constexpr uint16_t kUnknown{std::numeric_limits<uint16_t>::max()};
+	constexpr uint16_t kUnknown{UINT16_MAX};
 
 	for (std::size_t i = 0; i < input.count; ++i) {
 		const uint16_t d = input.distances[i];
