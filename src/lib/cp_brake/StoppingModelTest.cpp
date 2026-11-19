@@ -167,6 +167,17 @@ TEST(StoppingModelTest, SectorCapFollowsTheWireValue)
 	EXPECT_FLOAT_EQ(sectorSpeedCap(4001, min_cm, max_cm, 0.f, p), speedCap(40.f, p)); // clear
 }
 
+TEST(StoppingModelTest, ASensorMinimumOfZeroStillGivesCapsForValidReadings)
+{
+	const StoppingParams p = fixture();
+
+	EXPECT_EQ(sectorSpeedCap(0, 0, 4000, 0.f, p), 0.f);        // too close keeps its meaning
+	EXPECT_EQ(sectorSpeedCap(kUnknown, 0, 4000, 0.f, p), 0.f); // unknown keeps its meaning
+	EXPECT_FLOAT_EQ(sectorSpeedCap(1234, 0, 4000, 0.f, p), speedCap(12.34f, p));
+	EXPECT_FLOAT_EQ(sectorSpeedCap(4001, 0, 4000, 0.f, p), speedCap(40.f, p));
+	EXPECT_EQ(sectorSpeedCap(5, 4000, 4000, 0.f, p), 0.f);     // min not below max stays invalid
+}
+
 TEST(StoppingModelTest, TravelledDistanceShortensTheRangeButMovingAwayDoesNot)
 {
 	const StoppingParams p = fixture();

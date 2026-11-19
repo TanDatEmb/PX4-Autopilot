@@ -70,7 +70,7 @@ float speedCap(float usable_range_m, const StoppingParams &params);
 
 /**
  * Cap of one sector from its ObstacleDistance wire value (ICD-CP-03).
- * 0 (too close) and UINT16_MAX (unknown) give 0; max_cm + 1 (clear) is evaluated at max_cm;
+ * 0 (too close) and UINT16_MAX (unknown) give 0, whatever min_cm is (a sensor may report 0); max_cm + 1 (clear) is evaluated at max_cm;
  * a value in [min_cm, max_cm] is an occupied range in centimetres; anything else is invalid and
  * gives 0. travelled_toward_m is the distance moved toward the sector since the sample time; a
  * negative or non-finite value is treated as 0, so moving away never extends the range.

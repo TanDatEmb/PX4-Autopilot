@@ -113,7 +113,7 @@ float sectorSpeedCap(uint16_t wire_cm, uint16_t min_cm, uint16_t max_cm, float t
 	constexpr uint16_t kUnknown{std::numeric_limits<uint16_t>::max()};
 	constexpr float kCentimetresPerMetre{100.f};
 
-	if (wire_cm == 0U || wire_cm == kUnknown || min_cm == 0U || min_cm >= max_cm) {
+	if (wire_cm == 0U || wire_cm == kUnknown || min_cm >= max_cm) {
 		return 0.f;
 	}
 
