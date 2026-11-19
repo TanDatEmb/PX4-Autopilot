@@ -43,6 +43,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace cp_brake
 {
@@ -77,6 +78,15 @@ struct LimiterParams {
 };
 
 bool isValid(const LimiterParams &params);
+
+/**
+ * Time step [s] to give CapLimiter::update from the times of two accepted samples [us], or -1 when
+ * there is no usable step: no previous sample, a time that did not advance, an age limit that is
+ * not a positive number, or a gap longer than age_limit_s. A gap that long gave no supporting
+ * data, so it must not count as dwell or as time to rise: the limiter then only tightens and its
+ * dwell starts again.
+ */
+float sampleStep(uint64_t previous_us, uint64_t current_us, float age_limit_s);
 
 class CapLimiter
 {

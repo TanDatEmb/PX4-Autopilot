@@ -138,11 +138,10 @@ void CpBrake::process(const obstacle_distance_s &input)
 			_sector_valid[i] = (wire != UINT16_MAX);
 		}
 
-		float dt_s = -1.f;
-
-		if (_last_sample_timestamp != 0U && input.timestamp > _last_sample_timestamp) {
-			dt_s = static_cast<float>(input.timestamp - _last_sample_timestamp) * 1e-6f;
-		}
+		// a gap longer than the sample age limit gave no supporting data: no step, so the limiter
+		// only tightens and its dwell starts again
+		const float dt_s = cp_brake::sampleStep(_last_sample_timestamp, input.timestamp,
+							_config.sample_age_stop_s);
 
 		_limiter.update(_raw_caps, _sector_valid, dt_s);
 	}

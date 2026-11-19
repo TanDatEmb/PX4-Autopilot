@@ -44,6 +44,17 @@ bool isValid(const LimiterParams &params)
 	       && params.dwell_s >= 0.f && params.rise_m_s2 > 0.f;
 }
 
+float sampleStep(uint64_t previous_us, uint64_t current_us, float age_limit_s)
+{
+	if (previous_us == 0U || current_us <= previous_us || !std::isfinite(age_limit_s) || age_limit_s <= 0.f) {
+		return -1.f;
+	}
+
+	const float step_s = static_cast<float>(current_us - previous_us) * 1e-6f;
+
+	return (step_s > age_limit_s) ? -1.f : step_s;
+}
+
 CapLimiter::CapLimiter(const LimiterParams &params) : _params(params)
 {
 }
