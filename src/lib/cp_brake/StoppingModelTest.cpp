@@ -178,6 +178,17 @@ TEST(StoppingModelTest, ASensorMinimumOfZeroStillGivesCapsForValidReadings)
 	EXPECT_EQ(sectorSpeedCap(5, 4000, 4000, 0.f, p), 0.f);     // min not below max stays invalid
 }
 
+TEST(StoppingModelTest, AMaximumWhoseClearMarkerCollidesWithASentinelIsInvalid)
+{
+	const StoppingParams p = fixture();
+
+	// max + 1 would wrap to 0 or equal UINT16_MAX: a clear sector could not be told from too close or unknown
+	EXPECT_EQ(sectorSpeedCap(1234, 10, kUnknown, 0.f, p), 0.f);
+	EXPECT_EQ(sectorSpeedCap(1234, 10, kUnknown - 1, 0.f, p), 0.f);
+	EXPECT_EQ(sectorSpeedCap(kUnknown - 1, 10, kUnknown - 1, 0.f, p), 0.f);
+	EXPECT_GT(sectorSpeedCap(50000, 10, kUnknown - 2, 0.f, p), 0.f); // the largest usable maximum
+}
+
 TEST(StoppingModelTest, TravelledDistanceShortensTheRangeButMovingAwayDoesNot)
 {
 	const StoppingParams p = fixture();
