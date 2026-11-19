@@ -32,8 +32,10 @@
 ############################################################################
 
 px4_add_library(cp_brake_model
+	CapLimiter.cpp
 	StoppingModel.cpp
 )
 target_include_directories(cp_brake_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
+px4_add_unit_gtest(SRC CapLimiterTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC StoppingModelTest.cpp LINKLIBS cp_brake_model)
