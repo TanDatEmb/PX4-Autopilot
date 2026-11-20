@@ -478,6 +478,45 @@ TEST(HeadingHistoryTest, ResetToInvalidParametersGivesNoHeading)
 	EXPECT_LOOKUP(history.at(kT0_us), HeadingLookup::kInvalidParams);
 }
 
+TEST(HeadingHistoryTest, ParametersAreTheSameOnlyWhenBothAreUsableAndEqual)
+{
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	const float inf = std::numeric_limits<float>::infinity();
+
+	EXPECT_TRUE(sameParams(HeadingHistoryParams{64, 0.1f}, HeadingHistoryParams{64, 0.1f}));
+	EXPECT_TRUE(sameParams(HeadingHistoryParams{-1, -1.f}, HeadingHistoryParams{-1, -1.f}));   // the sentinels
+
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, 0.1f}, HeadingHistoryParams{32, 0.1f}));
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, 0.1f}, HeadingHistoryParams{64, 0.2f}));
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, 0.2f}, HeadingHistoryParams{64, 0.1f}));
+
+	// the review: a gap that was NaN and is corrected must count as a change, in either direction
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, nan}, HeadingHistoryParams{64, 0.1f}));
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, 0.1f}, HeadingHistoryParams{64, nan}));
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, nan}, HeadingHistoryParams{64, nan}));
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, inf}, HeadingHistoryParams{64, 0.1f}));
+	EXPECT_FALSE(sameParams(HeadingHistoryParams{64, 0.1f}, HeadingHistoryParams{64, inf}));
+}
+
+TEST(HeadingHistoryTest, AParameterThatWasInvalidAndIsCorrectedStartsTheHistoryAgain)
+{
+	// what the module does on a parameter update: reset unless the parameters are the same
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	HeadingHistory history(HeadingHistoryParams{16, nan});
+	const HeadingHistoryParams corrected{16, 0.1f};
+
+	EXPECT_FALSE(history.add(kT0_us, 0.f, 0U, true));
+	EXPECT_LOOKUP(history.at(kT0_us), HeadingLookup::kInvalidParams);
+
+	if (!sameParams(history.params(), corrected)) {
+		history.reset(corrected);
+	}
+
+	EXPECT_TRUE(history.add(kT0_us, 0.f, 0U, true));
+	EXPECT_TRUE(history.add(kT0_us + kStep_us, 0.f, 0U, true));
+	EXPECT_TRUE(history.at(kT0_us + kStep_us / 2U).valid());
+}
+
 TEST(HeadingHistoryTest, AnInvalidResultCarriesNoHeadingValue)
 {
 	const HeadingHistory history = filled(4, 1.f);

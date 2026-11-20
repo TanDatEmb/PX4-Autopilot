@@ -66,6 +66,13 @@ bool isValid(const HeadingHistoryParams &params)
 	       && std::isfinite(params.max_gap_s) && params.max_gap_s > 0.f;
 }
 
+bool sameParams(const HeadingHistoryParams &a, const HeadingHistoryParams &b)
+{
+	// no == on floats (-Wfloat-equal), and a non-finite gap limit is never the same as anything
+	return a.depth == b.depth && std::isfinite(a.max_gap_s) && std::isfinite(b.max_gap_s)
+	       && !(a.max_gap_s < b.max_gap_s) && !(a.max_gap_s > b.max_gap_s);
+}
+
 HeadingHistory::HeadingHistory(const HeadingHistoryParams &params) : _params(params)
 {
 }

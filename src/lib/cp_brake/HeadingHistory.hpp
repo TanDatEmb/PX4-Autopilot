@@ -77,6 +77,14 @@ struct HeadingHistoryParams {
 /** True when the depth is in its range and the gap limit is a finite positive number. */
 bool isValid(const HeadingHistoryParams &params);
 
+/**
+ * True when both sets are the same usable values: equal depth and equal finite gap limits. A
+ * non-finite gap limit is never the same as anything, itself included, so a parameter that was
+ * invalid and is corrected always counts as a change (and an invalid one resets the history again,
+ * which costs nothing: it holds no sample).
+ */
+bool sameParams(const HeadingHistoryParams &a, const HeadingHistoryParams &b);
+
 /** Why a lookup gave a heading or not. The values equal the HEADING_LOOKUP_* constants of CpBrakeStatus. */
 enum class HeadingLookup : uint8_t {
 	kOk = 0,

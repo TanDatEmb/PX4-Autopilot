@@ -143,11 +143,7 @@ void CpBrake::updateConfig()
 	// unrelated parameter update does not (it would leave no heading for the next second)
 	const cp_brake::HeadingHistoryParams history_params{_param_cpb_hdg_depth.get(), _param_cpb_hdg_gap.get()};
 
-	const float old_gap_s = _heading_history.params().max_gap_s;
-	const bool gap_changed = (history_params.max_gap_s < old_gap_s) || (history_params.max_gap_s > old_gap_s)
-				 || !std::isfinite(history_params.max_gap_s);
-
-	if (history_params.depth != _heading_history.params().depth || gap_changed) {
+	if (!cp_brake::sameParams(history_params, _heading_history.params())) {
 		_heading_history.reset(history_params); // not a temporary: it would not fit the NuttX stack frame
 	}
 
@@ -271,6 +267,14 @@ void CpBrake::process(const obstacle_distance_s &input)
 		}
 	}
 
+	// an unused map does not refresh the sample, so it ages and the stale rule applies; the step for
+	// the limiter does not reach back over it
+	float step_s = -1.f;
+
+	if (input_ok) {
+		step_s = _map_timeline.onMap(input.timestamp, _time_sync_good, _config.sample_age_stop_s);
+	}
+
 	if (input_ok && _config_faults == 0U && _param_cpb_en.get() == 1) {
 		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
 			const uint16_t wire = input.distances[i];
@@ -284,30 +288,23 @@ void CpBrake::process(const obstacle_distance_s &input)
 			_sector_valid.fill(false);
 		}
 
-		// a gap longer than the sample age limit gave no supporting data: no step, so the limiter
-		// only tightens and its dwell starts again
-		const float dt_s = cp_brake::sampleStep(_last_sample_timestamp, input.timestamp,
-							_config.sample_age_stop_s);
-
-		_limiter.update(_raw_caps, _sector_valid, dt_s);
-	}
-
-	// an unused map does not refresh the sample, so it ages and the stale rule applies
-	if (input_ok && _time_sync_good) {
-		_last_sample_timestamp = input.timestamp;
+		// a gap longer than the sample age limit, or an unused map before this one, gave no supporting
+		// data: no step, so the limiter only tightens and its dwell starts again
+		_limiter.update(_raw_caps, _sector_valid, step_s);
 	}
 }
 
 void CpBrake::evaluate()
 {
 	const hrt_abstime now = hrt_absolute_time();
-	const bool has_sample = (_last_sample_timestamp != 0U);
+	const uint64_t sample_timestamp = _map_timeline.sampleTimestamp();
+	const bool has_sample = (sample_timestamp != 0U);
 
 	// age of the latest accepted map; a map stamped after now gives a negative age and counts as stale
 	float sample_age_s = 0.f;
 
 	if (has_sample) {
-		sample_age_s = static_cast<float>(static_cast<int64_t>(now) - static_cast<int64_t>(_last_sample_timestamp)) * 1e-6f;
+		sample_age_s = static_cast<float>(static_cast<int64_t>(now) - static_cast<int64_t>(sample_timestamp)) * 1e-6f;
 	}
 
 	// what the caps allow: some cap below the maximum speed limits, and no cap above zero means blocked
@@ -322,7 +319,7 @@ void CpBrake::evaluate()
 
 	// the heading of the sample time, from the history; no map yet means no heading
 	const cp_brake::HeadingResult heading = has_sample
-			? _heading_history.at(_last_sample_timestamp)
+			? _heading_history.at(sample_timestamp)
 			: cp_brake::HeadingResult{cp_brake::HeadingLookup::kEmpty, 0.f};
 	_heading_lookup = heading.lookup;
 
@@ -352,7 +349,7 @@ void CpBrake::evaluate()
 
 	cp_brake_constraints_s constraints{};
 	constraints.timestamp = now;
-	constraints.sample_timestamp = _last_sample_timestamp;
+	constraints.sample_timestamp = sample_timestamp;
 	constraints.heading_rad = heading.valid() ? heading.heading_rad : 0.f;
 	constraints.heading_valid = heading.valid();
 	constraints.enforcement_active = false; // no hook yet
@@ -369,13 +366,13 @@ void CpBrake::evaluate()
 
 	cp_brake_status_s status{};
 	status.timestamp = now;
-	status.sample_timestamp = _last_sample_timestamp;
+	status.sample_timestamp = sample_timestamp;
 	status.constraint_timestamp = _last_constraint_timestamp;
 	// age of the last sample, saturated to the 32 bit field
 	uint64_t sample_age_us = 0U;
 
-	if (has_sample && now > _last_sample_timestamp) {
-		sample_age_us = now - _last_sample_timestamp;
+	if (has_sample && now > sample_timestamp) {
+		sample_age_us = now - sample_timestamp;
 	}
 
 	status.sample_age_us = (sample_age_us > UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(sample_age_us);
@@ -430,8 +427,9 @@ int CpBrake::print_status()
 		 static_cast<unsigned>(_input_rejected_count));
 
 	const hrt_abstime now = hrt_absolute_time();
-	const double sample_age_s = (_last_sample_timestamp != 0U && now > _last_sample_timestamp)
-				    ? static_cast<double>(now - _last_sample_timestamp) * 1e-6 : 0.0;
+	const uint64_t sample_timestamp = _map_timeline.sampleTimestamp();
+	const double sample_age_s = (sample_timestamp != 0U && now > sample_timestamp)
+				    ? static_cast<double>(now - sample_timestamp) * 1e-6 : 0.0;
 	PX4_INFO("takeoff state: %u, px4 state valid: %d, safe stop latched: %d, sample age: %.3f s",
 		 static_cast<unsigned>(_takeoff_state), static_cast<int>(_px4_state_valid),
 		 static_cast<int>(_safe_stop_latched), sample_age_s);
