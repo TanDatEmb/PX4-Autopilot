@@ -1165,3 +1165,46 @@ TEST_F(CollisionLimiterTest, ASafeStopAlsoCoversAnAccelerationOnlySetpoint)
 	expectSafeStop(0U);
 	expectAllFinite();
 }
+
+TEST_F(CollisionLimiterTest, AMissingConstraintIsStaleEvenWithAFreshTimestamp)
+{
+	_constraint.present = false; // nothing was received; whatever the struct holds is not a constraint
+	_constraint.timestamp_us = kNowUs - 1000U;
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	expectSafeStop(cp_brake::kReasonConstraintStale);
+}
+
+TEST_F(CollisionLimiterTest, AConstraintThatIsNotValidIsASafeStopWhateverItsState)
+{
+	_constraint.valid = false; // the module says the caps may not be used, with a state that does not say so
+	_constraint.state = cp_brake::kStateActiveClear;
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	expectSafeStop(0U);
+}
+
+TEST_F(CollisionLimiterTest, TwoCapsAtOnceLimitBothComponents)
+{
+	// a corner: ahead at 3 m/s and to the right at 2 m/s; the limiter needs more than one projection
+	_constraint.caps_m_s[0] = 3.f;
+	_constraint.caps_m_s[18] = 2.f;
+	setVelocity(8.f, 8.f);
+	run();
+	EXPECT_TRUE(_ok);
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(_output.vx, 3.f, 1e-3f);
+	EXPECT_NEAR(_output.vy, 2.f, 1e-3f);
+}
+
+TEST_F(CollisionLimiterFeedForwardTest, FeedForwardAwayFromTheSectorIsKeptWhileTheVehicleMovesTowardIt)
+{
+	setVelocity(8.f, 0.f);
+	setFeedForward(-2.f, 0.f);
+	_constraint.caps_m_s[0] = 4.f;
+	_states.velocity = Vector3f(2.f, 0.f, 0.f); // half way to the cap
+	run();
+	EXPECT_NEAR(_output.acceleration[0], -2.f, 1e-6f);
+}

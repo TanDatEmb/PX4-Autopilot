@@ -278,3 +278,54 @@ TEST(SetpointLimiterTest, TheNewReasonBitsAreDistinctAndOutsideTheConstraintFaul
 		seen |= bit;
 	}
 }
+
+TEST(SetpointLimiterTest, AnInfiniteVelocitySetpointIsLeftAloneAndNothingNotANumberIsMade)
+{
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 3.f;
+	const float state[2] = {0.f, 0.f};
+
+	float vel[2] = {INFINITY, 0.f};
+	float acc[2] = {1.f, 1.f};
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
+	EXPECT_TRUE(std::isinf(vel[0]));
+	EXPECT_EQ(vel[1], 0.f);
+	EXPECT_EQ(acc[0], 1.f);
+	EXPECT_EQ(acc[1], 1.f);
+
+	float vel_nan[2] = {NAN, 4.f};
+	float acc_nan[2] = {1.f, 1.f};
+	cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel_nan, acc_nan);
+	EXPECT_TRUE(std::isnan(vel_nan[0]));
+	EXPECT_EQ(vel_nan[1], 4.f);
+}
+
+TEST(SetpointLimiterTest, TwoCapsAtOnceGiveTheCorner)
+{
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 3.f;
+	c.caps_m_s[18] = 2.f;
+	const float state[2] = {0.f, 0.f};
+	float vel[2] = {8.f, 8.f};
+	float acc[2] = {NAN, NAN};
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(vel[0], 3.f, 1e-3f);
+	EXPECT_NEAR(vel[1], 2.f, 1e-3f);
+}
+
+TEST(SetpointLimiterTest, AHalfPlaneAtExactlyNinetyDegreesLeavesTheMotionAlone)
+{
+	// ADR 0008: an obstacle to the side does not reduce forward motion, even with a cap of 0
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[18] = 0.f;
+	c.caps_m_s[54] = 0.f;
+	const float state[2] = {0.f, 0.f};
+	float vel[2] = {8.f, 0.f};
+	float acc[2] = {NAN, NAN};
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
+	EXPECT_EQ(vel[0], 8.f);
+	EXPECT_EQ(vel[1], 0.f);
+}
