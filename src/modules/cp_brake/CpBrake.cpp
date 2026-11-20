@@ -370,7 +370,6 @@ void CpBrake::evaluate()
 	_last_constraint_timestamp = now;
 
 	cp_brake_status_s status{};
-	status.source = cp_brake_status_s::SOURCE_MODULE;
 	status.timestamp = now;
 	status.sample_timestamp = sample_timestamp;
 	status.constraint_timestamp = _last_constraint_timestamp;

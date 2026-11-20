@@ -61,7 +61,7 @@
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
 #include <uORB/topics/cp_brake_constraints.h>
-#include <uORB/topics/cp_brake_status.h>
+#include <uORB/topics/cp_brake_hook.h>
 #include <uORB/topics/hover_thrust_estimate.h>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/trajectory_setpoint.h>
@@ -99,7 +99,7 @@ private:
 	/** Give the limiter hook (cp_brake) its inputs for this cycle: parameters, flight phase, navigation state, constraint. */
 	void updateCollisionLimiter(const hrt_abstime now, const bool flying);
 
-	/** Publish what the hook did, at the time it applied the constraint (cp_brake_status, SOURCE_HOOK). */
+	/** Publish what the hook did, at the time it applied the constraint (cp_brake_hook). */
 	void publishCollisionLimiterStatus(const hrt_abstime now);
 
 	TakeoffHandling _takeoff; /**< state machine and ramp to bring the vehicle off the ground without jumps */
@@ -109,7 +109,7 @@ private:
 	uORB::PublicationData<takeoff_status_s>              _takeoff_status_pub{ORB_ID(takeoff_status)};
 	uORB::Publication<vehicle_attitude_setpoint_s>	     _vehicle_attitude_setpoint_pub{ORB_ID(vehicle_attitude_setpoint)};
 	uORB::Publication<vehicle_local_position_setpoint_s> _local_pos_sp_pub{ORB_ID(vehicle_local_position_setpoint)};	/**< vehicle local position setpoint publication */
-	uORB::Publication<cp_brake_status_s>                 _cp_brake_status_pub{ORB_ID(cp_brake_status)};	/**< status of the limiter hook, shared with the cp_brake module */
+	uORB::Publication<cp_brake_hook_s>                   _cp_brake_hook_pub{ORB_ID(cp_brake_hook)};	/**< what the limiter hook did, apart from cp_brake_status (see the message) */
 
 	uORB::SubscriptionCallbackWorkItem _local_pos_sub{this, ORB_ID(vehicle_local_position)};	/**< vehicle local position */
 
@@ -154,11 +154,11 @@ private:
 	float _cpb_cstr_age_s{-1.f};
 	uint8_t _nav_state{vehicle_status_s::NAVIGATION_STATE_MANUAL};
 	cp_brake_constraints_s _cp_constraints{};          ///< the latest constraint, for the status
-	cp_brake_status_s _cp_status{};                    ///< the status of the hook, built here and not on the stack
+	cp_brake_hook_s _cp_hook_message{};                ///< what the hook did, built here and not on the stack
 	cp_brake::HookConstraint _cp_hook_constraint{};    ///< the same, as the hook reads it
-	hrt_abstime _cp_status_time{0};                    ///< when the hook status was last published
-	cp_brake::HookAction _cp_status_action{cp_brake::HookAction::kTransparent};
-	uint32_t _cp_status_reasons{0U};
+	hrt_abstime _cp_hook_time{0};                    ///< when the hook status was last published
+	cp_brake::HookAction _cp_hook_action{cp_brake::HookAction::kTransparent};
+	uint32_t _cp_hook_reasons{0U};
 
 	DEFINE_PARAMETERS(
 		// Position Control

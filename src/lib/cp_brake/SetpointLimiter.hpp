@@ -92,7 +92,7 @@ struct HookConstraint {
 	uint32_t reason_flags;         ///< kReason* bits of the state machine
 };
 
-/** What the hook did. The values are the HOOK_* constants of the cp_brake_status message. */
+/** What the hook did. The values are the ACTION_* constants of the cp_brake_hook message. */
 enum class HookAction : uint8_t {
 	kTransparent = 0,  ///< disabled, before flight, or another navigation state: nothing was read or changed
 	kNoAction = 1,     ///< the constraint says no action (observer-only, or an unqualified PX4 state)

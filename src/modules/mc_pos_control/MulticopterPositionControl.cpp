@@ -43,11 +43,11 @@
 using namespace matrix;
 
 // the hook's enumerations equal the constants of the status message
-static_assert(static_cast<uint8_t>(cp_brake::HookAction::kTransparent) == cp_brake_status_s::HOOK_ACTION_TRANSPARENT, "hook action");
-static_assert(static_cast<uint8_t>(cp_brake::HookAction::kNoAction) == cp_brake_status_s::HOOK_ACTION_NO_ACTION, "hook action");
-static_assert(static_cast<uint8_t>(cp_brake::HookAction::kClear) == cp_brake_status_s::HOOK_ACTION_CLEAR, "hook action");
-static_assert(static_cast<uint8_t>(cp_brake::HookAction::kLimited) == cp_brake_status_s::HOOK_ACTION_LIMITED, "hook action");
-static_assert(static_cast<uint8_t>(cp_brake::HookAction::kSafeStop) == cp_brake_status_s::HOOK_ACTION_SAFE_STOP, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kTransparent) == cp_brake_hook_s::ACTION_TRANSPARENT, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kNoAction) == cp_brake_hook_s::ACTION_NO_ACTION, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kClear) == cp_brake_hook_s::ACTION_CLEAR, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kLimited) == cp_brake_hook_s::ACTION_LIMITED, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kSafeStop) == cp_brake_hook_s::ACTION_SAFE_STOP, "hook action");
 static_assert(cp_brake::kSectorCount == 72, "sector count of cp_brake_constraints");
 
 MulticopterPositionControl::MulticopterPositionControl(bool vtol) :
@@ -705,43 +705,42 @@ void MulticopterPositionControl::publishCollisionLimiterStatus(const hrt_abstime
 	}
 
 	// 10 Hz and every change of what the hook did or why (ICD-CP-05)
-	const bool changed = (record.result.action != _cp_status_action) || (record.result.reason_flags != _cp_status_reasons);
+	const bool changed = (record.result.action != _cp_hook_action) || (record.result.reason_flags != _cp_hook_reasons);
 
-	if (!changed && (now - _cp_status_time) < 100_ms) {
+	if (!changed && (now - _cp_hook_time) < 100_ms) {
 		return;
 	}
 
-	_cp_status_time = now;
-	_cp_status_action = record.result.action;
-	_cp_status_reasons = record.result.reason_flags;
+	_cp_hook_time = now;
+	_cp_hook_action = record.result.action;
+	_cp_hook_reasons = record.result.reason_flags;
 
 	const auto age_us = [now](const uint64_t timestamp) -> uint32_t {
 		const uint64_t age = (timestamp != 0U && now > timestamp) ? (now - timestamp) : 0U;
 		return (age > UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(age);
 	};
 
-	cp_brake_status_s &status = _cp_status;
-	memset(&status, 0, sizeof(status)); // in place: no temporary of this size on the stack
-	status.timestamp = now; // when the hook applied the constraint, so the sample age is sample to enforcement
-	status.source = cp_brake_status_s::SOURCE_HOOK;
-	status.sample_timestamp = _cp_hook_constraint.present ? _cp_constraints.sample_timestamp : 0U;
-	status.constraint_timestamp = _cp_hook_constraint.present ? _cp_constraints.timestamp : 0U;
-	status.sample_age_us = age_us(status.sample_timestamp);
-	status.constraint_age_us = age_us(status.constraint_timestamp);
-	status.state = _cp_hook_constraint.present ? _cp_constraints.state : cp_brake_constraints_s::STATE_DISABLED;
-	status.reason_flags = record.result.reason_flags;
-	status.hook_action = static_cast<uint8_t>(record.result.action);
-	status.active_sector = record.result.active_sector;
+	cp_brake_hook_s &message = _cp_hook_message;
+	memset(&message, 0, sizeof(message)); // in place: no temporary of this size on the stack
+	message.timestamp = now; // when the hook applied the constraint, so the sample age is sample to enforcement
+	message.sample_timestamp = _cp_hook_constraint.present ? _cp_constraints.sample_timestamp : 0U;
+	message.constraint_timestamp = _cp_hook_constraint.present ? _cp_constraints.timestamp : 0U;
+	message.sample_age_us = age_us(message.sample_timestamp);
+	message.constraint_age_us = age_us(message.constraint_timestamp);
+	message.state = _cp_hook_constraint.present ? _cp_constraints.state : cp_brake_constraints_s::STATE_DISABLED;
+	message.reason_flags = record.result.reason_flags;
+	message.action = static_cast<uint8_t>(record.result.action);
+	message.active_sector = record.result.active_sector;
 
 	for (int axis = 0; axis < 2; ++axis) {
-		status.vel_sp_in[axis] = record.vel_sp_in_m_s[axis];
-		status.vel_sp_out[axis] = record.vel_sp_out_m_s[axis];
-		status.acc_sp_in[axis] = record.acc_sp_in_m_s2[axis];
-		status.acc_sp_out[axis] = record.acc_sp_out_m_s2[axis];
-		status.vel[axis] = record.vel_m_s[axis];
+		message.vel_sp_in[axis] = record.vel_sp_in_m_s[axis];
+		message.vel_sp_out[axis] = record.vel_sp_out_m_s[axis];
+		message.acc_sp_in[axis] = record.acc_sp_in_m_s2[axis];
+		message.acc_sp_out[axis] = record.acc_sp_out_m_s2[axis];
+		message.vel[axis] = record.vel_m_s[axis];
 	}
 
-	_cp_brake_status_pub.publish(status);
+	_cp_brake_hook_pub.publish(message);
 }
 
 trajectory_setpoint_s MulticopterPositionControl::generateFailsafeSetpoint(const hrt_abstime &now,
