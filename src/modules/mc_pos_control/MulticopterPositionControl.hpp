@@ -60,7 +60,6 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
-#include <uORB/SubscriptionData.hpp>
 #include <uORB/topics/cp_brake_constraints.h>
 #include <uORB/topics/cp_brake_status.h>
 #include <uORB/topics/hover_thrust_estimate.h>
