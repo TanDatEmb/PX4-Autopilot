@@ -149,9 +149,9 @@ void PositionControl::_applyCollisionLimiter()
 {
 	// The hook acts between the position and the velocity control, on the horizontal velocity setpoint
 	// (which already holds the position error term and the feed-forward) and on the horizontal
-	// feed-forward acceleration. It is a pure function of these, the vehicle velocity and the inputs
-	// given with setCollisionLimiter(), so it gives the same result on each of the up to three calls
-	// per cycle. The vertical axis, the yaw and the integrators are not touched.
+	// feed-forward acceleration. It is a pure function of these and the inputs given with
+	// setCollisionLimiter(), so it gives the same result on each of the up to three calls per cycle.
+	// The vertical axis, the yaw and the integrators are not touched.
 	float vel_sp[2] = {_vel_sp(0), _vel_sp(1)};
 	float acc_sp[2] = {_acc_sp(0), _acc_sp(1)};
 	const float vel[2] = {_vel(0), _vel(1)};
@@ -163,7 +163,7 @@ void PositionControl::_applyCollisionLimiter()
 	_limiter_record.vel_m_s[0] = vel[0];
 	_limiter_record.vel_m_s[1] = vel[1];
 
-	_limiter_record.result = cp_brake::limitHorizontalSetpoint(_limiter_context, _limiter_constraint, vel, vel_sp, acc_sp);
+	_limiter_record.result = cp_brake::limitHorizontalSetpoint(_limiter_context, _limiter_constraint, vel_sp, acc_sp);
 
 	// nothing is written back unless the hook acted, so the other paths are the unchanged controller
 	if (_limiter_record.result.action == cp_brake::HookAction::kLimited

@@ -119,9 +119,8 @@ TEST(SetpointLimiterTest, EverySectorLimitsTheVelocityAlongItsOwnDirectionAtEver
 			const float perp[2] = {-u[1], u[0]};
 			float vel[2] = {8.f * u[0] + 2.f * perp[0], 8.f * u[1] + 2.f * perp[1]};
 			float acc[2] = {NAN, NAN};
-			const float state[2] = {0.f, 0.f};
 
-			const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+			const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 			EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
 			EXPECT_EQ(r.active_sector, sector);
 			EXPECT_NEAR(vel[0] * u[0] + vel[1] * u[1], 3.f, 1e-3f);
@@ -164,9 +163,8 @@ TEST(SetpointLimiterTest, TheResultSatisfiesEverySectorForAnyInput)
 		const float in[2] = {speed * cosf(angle), speed * sinf(angle)};
 		float vel[2] = {in[0], in[1]};
 		float acc[2] = {(rng.next() - 0.5f) * 6.f, (rng.next() - 0.5f) * 6.f};
-		const float state[2] = {rng.next() * 6.f, rng.next() * 6.f};
 
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, vel, acc);
 		SCOPED_TRACE(::testing::Message() << "trial " << trial);
 		ASSERT_TRUE(std::isfinite(vel[0]) && std::isfinite(vel[1]) && std::isfinite(acc[0]) && std::isfinite(acc[1]));
 		EXPECT_TRUE(r.action == cp_brake::HookAction::kClear || r.action == cp_brake::HookAction::kLimited);
@@ -184,7 +182,7 @@ TEST(SetpointLimiterTest, TheResultSatisfiesEverySectorForAnyInput)
 		// a second application changes nothing: the hook is a pure function of the setpoint it is given
 		float vel_again[2] = {vel[0], vel[1]};
 		float acc_again[2] = {acc[0], acc[1]};
-		cp_brake::limitHorizontalSetpoint(context, c, state, vel_again, acc_again);
+		cp_brake::limitHorizontalSetpoint(context, c, vel_again, acc_again);
 		EXPECT_NEAR(vel_again[0], vel[0], 2e-3f);
 		EXPECT_NEAR(vel_again[1], vel[1], 2e-3f);
 
@@ -193,8 +191,8 @@ TEST(SetpointLimiterTest, TheResultSatisfiesEverySectorForAnyInput)
 		float vel_second[2] = {in[0], in[1]};
 		float acc_first[2] = {acc[0], acc[1]};
 		float acc_second[2] = {acc[0], acc[1]};
-		cp_brake::limitHorizontalSetpoint(context, c, state, vel_first, acc_first);
-		cp_brake::limitHorizontalSetpoint(context, c, state, vel_second, acc_second);
+		cp_brake::limitHorizontalSetpoint(context, c, vel_first, acc_first);
+		cp_brake::limitHorizontalSetpoint(context, c, vel_second, acc_second);
 		EXPECT_EQ(vel_first[0], vel_second[0]);
 		EXPECT_EQ(vel_first[1], vel_second[1]);
 		EXPECT_EQ(acc_first[0], acc_second[0]);
@@ -208,9 +206,8 @@ TEST(SetpointLimiterTest, ASafeStopGivesExactZeroEvenWhenTheSetpointIsNotANumber
 	c.state = cp_brake::kStateSafeStop;
 	float vel[2] = {NAN, INFINITY};
 	float acc[2] = {NAN, 3.f};
-	const float state[2] = {NAN, NAN};
 
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 	EXPECT_EQ(r.action, cp_brake::HookAction::kSafeStop);
 	EXPECT_EQ(vel[0], 0.f);
 	EXPECT_EQ(vel[1], 0.f);
@@ -226,13 +223,12 @@ TEST(SetpointLimiterTest, TransparentPathsDoNotReadOrChangeAnything)
 	c.caps_m_s[0] = 0.f;
 
 	cp_brake::HookContext context = flightContext();
-	const float state[2] = {0.f, 0.f};
 
 	context.enabled = false;
 	{
 		float vel[2] = {8.f, 1.f};
 		float acc[2] = {1.f, 1.f};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kTransparent);
 		EXPECT_EQ(r.reason_flags, 0U);
 		EXPECT_EQ(vel[0], 8.f);
@@ -246,7 +242,7 @@ TEST(SetpointLimiterTest, TransparentPathsDoNotReadOrChangeAnything)
 	{
 		float vel[2] = {8.f, 1.f};
 		float acc[2] = {1.f, 1.f};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kTransparent);
 		EXPECT_EQ(vel[0], 8.f);
 	}
@@ -256,7 +252,7 @@ TEST(SetpointLimiterTest, TransparentPathsDoNotReadOrChangeAnything)
 	{
 		float vel[2] = {8.f, 1.f};
 		float acc[2] = {1.f, 1.f};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kTransparent);
 		EXPECT_EQ(r.reason_flags, cp_brake::kReasonNavState);
 		EXPECT_EQ(vel[0], 8.f);
@@ -284,11 +280,10 @@ TEST(SetpointLimiterTest, AnInfiniteVelocitySetpointIsLeftAloneAndNothingNotANum
 {
 	cp_brake::HookConstraint c = openConstraint(0.f);
 	c.caps_m_s[0] = 3.f;
-	const float state[2] = {0.f, 0.f};
 
 	float vel[2] = {INFINITY, 0.f};
 	float acc[2] = {1.f, 1.f};
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 	EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
 	EXPECT_TRUE(std::isinf(vel[0]));
 	EXPECT_EQ(vel[1], 0.f);
@@ -297,7 +292,7 @@ TEST(SetpointLimiterTest, AnInfiniteVelocitySetpointIsLeftAloneAndNothingNotANum
 
 	float vel_nan[2] = {NAN, 4.f};
 	float acc_nan[2] = {1.f, 1.f};
-	cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel_nan, acc_nan);
+	cp_brake::limitHorizontalSetpoint(flightContext(), c, vel_nan, acc_nan);
 	EXPECT_TRUE(std::isnan(vel_nan[0]));
 	EXPECT_EQ(vel_nan[1], 4.f);
 }
@@ -307,10 +302,9 @@ TEST(SetpointLimiterTest, TwoCapsAtOnceGiveTheCorner)
 	cp_brake::HookConstraint c = openConstraint(0.f);
 	c.caps_m_s[0] = 3.f;
 	c.caps_m_s[18] = 2.f;
-	const float state[2] = {0.f, 0.f};
 	float vel[2] = {8.f, 8.f};
 	float acc[2] = {NAN, NAN};
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
 	EXPECT_NEAR(vel[0], 3.f, 1e-3f);
 	EXPECT_NEAR(vel[1], 2.f, 1e-3f);
@@ -322,10 +316,9 @@ TEST(SetpointLimiterTest, AHalfPlaneAtExactlyNinetyDegreesLeavesTheMotionAlone)
 	cp_brake::HookConstraint c = openConstraint(0.f);
 	c.caps_m_s[18] = 0.f;
 	c.caps_m_s[54] = 0.f;
-	const float state[2] = {0.f, 0.f};
 	float vel[2] = {8.f, 0.f};
 	float acc[2] = {NAN, NAN};
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 	EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
 	EXPECT_EQ(vel[0], 8.f);
 	EXPECT_EQ(vel[1], 0.f);
@@ -335,11 +328,10 @@ TEST(SetpointLimiterTest, ASetpointWellInsideEveryCapChangesNothingAndIsClear)
 {
 	cp_brake::HookConstraint c = openConstraint(0.f);
 	c.caps_m_s[0] = 5.f;
-	const float state[2] = {0.5f, 0.f};
 	float vel[2] = {1.f, 0.5f};
 	float acc[2] = {2.f, 1.f};
 
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 	EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
 	EXPECT_EQ(vel[0], 1.f);
 	EXPECT_EQ(acc[0], 2.f);
@@ -352,12 +344,11 @@ TEST(SetpointLimiterTest, TheWholeFeedForwardIsClearedWhenTheVelocityIsLimited)
 	// part along the obstacle and the part away from it included
 	cp_brake::HookConstraint c = openConstraint(0.f);
 	c.caps_m_s[0] = 3.f;
-	const float state[2] = {1.f, 0.f};
 
 	for (const auto &ff : {std::pair<float, float>{2.f, 1.f}, {2.f, 0.f}, {-2.f, 0.5f}, {0.f, -1.f}}) {
 		float vel[2] = {8.f, 2.f};
 		float acc[2] = {ff.first, ff.second};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
 		EXPECT_EQ(acc[0], 0.f);
 		EXPECT_EQ(acc[1], 0.f);
@@ -368,13 +359,12 @@ TEST(SetpointLimiterTest, TheFeedForwardIsUnchangedWhenNoSectorLimits)
 {
 	cp_brake::HookConstraint c = openConstraint(0.f);
 	c.caps_m_s[0] = 5.f;
-	const float state[2] = {0.5f, 0.f};
 
 	// well inside every cap
 	{
 		float vel[2] = {1.f, 0.5f};
 		float acc[2] = {2.f, 1.f};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
 		EXPECT_EQ(acc[0], 2.f);
 		EXPECT_EQ(acc[1], 1.f);
@@ -386,7 +376,7 @@ TEST(SetpointLimiterTest, TheFeedForwardIsUnchangedWhenNoSectorLimits)
 		c.caps_m_s[0] = 1.f;
 		float vel[2] = {1.f, 0.5f};
 		float acc[2] = {2.f, 0.f};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
 		EXPECT_EQ(acc[0], 2.f);
 		EXPECT_EQ(acc[1], 0.f);
@@ -397,12 +387,11 @@ TEST(SetpointLimiterTest, AFeedForwardThatIsNotANumberStaysNotANumberWhenTheVelo
 {
 	cp_brake::HookConstraint c = openConstraint(0.f);
 	c.caps_m_s[0] = 3.f;
-	const float state[2] = {0.f, 0.f};
 
 	for (const auto &ff : {std::pair<float, float>{NAN, NAN}, {NAN, 1.f}, {1.f, NAN}, {INFINITY, 0.f}}) {
 		float vel[2] = {8.f, 0.f};
 		float acc[2] = {ff.first, ff.second};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
 		EXPECT_NEAR(vel[0], 3.f, 1e-3f);
 
@@ -419,14 +408,13 @@ TEST(SetpointLimiterTest, ThreeCallsWithTheSameInputsGiveTheSameResult)
 	cp_brake::HookConstraint c = openConstraint(0.4f);
 	c.caps_m_s[2] = 2.f;
 	c.caps_m_s[20] = 3.f;
-	const float state[2] = {1.f, 1.f};
 	float first_vel[2] = {0.f, 0.f};
 	float first_acc[2] = {0.f, 0.f};
 
 	for (int call = 0; call < 3; ++call) {
 		float vel[2] = {7.f, 3.f};
 		float acc[2] = {1.5f, -0.5f};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, vel, acc);
 		EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
 
 		if (call == 0) {
@@ -467,8 +455,7 @@ TEST(SetpointLimiterTest, TheFeedForwardIsClearedExactlyWhenTheVelocityIsLimited
 		const float vel_in[2] = {vel[0], vel[1]};
 		const float acc_in[2] = {(rng.next() - 0.5f) * 8.f, (rng.next() - 0.5f) * 8.f};
 		float acc[2] = {acc_in[0], acc_in[1]};
-		const float state[2] = {(rng.next() - 0.5f) * 12.f, (rng.next() - 0.5f) * 12.f};
-		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, vel, acc);
 		SCOPED_TRACE(::testing::Message() << "trial " << trial);
 
 		if (r.action == cp_brake::HookAction::kLimited) {

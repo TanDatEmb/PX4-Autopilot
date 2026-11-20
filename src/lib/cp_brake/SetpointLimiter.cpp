@@ -151,7 +151,7 @@ HookResult safeStop(const uint32_t reason_flags, float vel_sp[2], float acc_sp[2
 } // namespace
 
 HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstraint &constraint,
-				   const float vel_state_ned_m_s[2], float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2])
+				   float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2])
 {
 	if (!context.enabled || !context.in_flight) {
 		return HookResult{HookAction::kTransparent, 0U, kNoSector};

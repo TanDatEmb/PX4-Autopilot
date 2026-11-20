@@ -15,7 +15,7 @@ uint8 action			# what the hook did, ACTION_*
 uint8 ACTION_TRANSPARENT = 0	# CPB_EN off, before flight, or a navigation state other than Position or Mission (reason NAV_STATE)
 uint8 ACTION_NO_ACTION = 1	# the constraint says no action (observer-only, or an unqualified PX4 state)
 uint8 ACTION_CLEAR = 2		# the limiter ran and no setpoint exceeded a cap
-uint8 ACTION_LIMITED = 3	# the limiter reduced the velocity setpoint and/or the feed-forward
+uint8 ACTION_LIMITED = 3	# the limiter reduced the velocity setpoint and cleared the horizontal feed-forward
 uint8 ACTION_SAFE_STOP = 4	# zero horizontal velocity and feed-forward cleared
 
 uint8 active_sector		# sector whose cap cut the velocity setpoint most, 255 for none

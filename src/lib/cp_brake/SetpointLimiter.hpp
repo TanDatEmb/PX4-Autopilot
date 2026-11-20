@@ -55,9 +55,9 @@
  *   the direction of the sector rotated to local NED with the heading of the constraint (the heading
  *   of the sample time, not the current one). Only the component entering a sector is limited, there
  *   is no global minimum range. A cap that is not a finite number >= 0 counts as 0, so the velocity
- *   toward that sector is stopped. The feed-forward acceleration toward a sector whose cap limits the
- *   velocity setpoint is removed in proportion to how close the vehicle already is to that cap: not
- *   at all at rest or moving away, completely at the cap or above it.
+ *   toward that sector is stopped. When any sector limits the velocity setpoint the horizontal
+ *   feed-forward acceleration is cleared (ADR 0020), otherwise it is unchanged; a feed-forward that is
+ *   not finite stays as it is.
  */
 
 #pragma once
@@ -97,7 +97,7 @@ enum class HookAction : uint8_t {
 	kTransparent = 0,  ///< disabled, before flight, or another navigation state: nothing was read or changed
 	kNoAction = 1,     ///< the constraint says no action (observer-only, or an unqualified PX4 state)
 	kClear = 2,        ///< the limiter ran and no setpoint exceeded a cap
-	kLimited = 3,      ///< the limiter reduced the velocity setpoint and/or the feed-forward
+	kLimited = 3,      ///< the limiter reduced the velocity setpoint and cleared the horizontal feed-forward
 	kSafeStop = 4      ///< zero horizontal velocity and feed-forward cleared
 };
 
@@ -115,8 +115,6 @@ struct HookResult {
  *
  * @param context the situation of this call
  * @param constraint the latest cp_brake_constraints
- * @param vel_state_ned_m_s [north, east] horizontal velocity of the vehicle [m/s]; may be NaN, which
- *        removes the feed-forward toward a limiting sector completely
  * @param vel_sp_ned_m_s [north, east] horizontal velocity setpoint [m/s], changed in place only when
  *        the result is kLimited or kSafeStop; a setpoint that is not finite is not a velocity command
  *        and is left alone, except by a safe stop
@@ -124,6 +122,6 @@ struct HookResult {
  *        under the same rule; NaN means no feed-forward and stays NaN, except in a safe stop
  */
 HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstraint &constraint,
-				   const float vel_state_ned_m_s[2], float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2]);
+				   float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2]);
 
 } // namespace cp_brake
