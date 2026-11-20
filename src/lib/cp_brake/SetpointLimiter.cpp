@@ -278,7 +278,7 @@ HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstra
 		return result;
 	}
 
-	// The feed-forward toward a sector whose cap cut the velocity setpoint is limited to what is left after
+	// The feed-forward toward a sector whose cap cut the velocity setpoint, or holds it, is limited to what is left after
 	// removing it in proportion to how close the vehicle already is to that cap: all of it at the cap or
 	// above it (or when the cap is 0 or the vehicle velocity is not a number), none at rest or moving away,
 	// so the trajectory cannot push the vehicle through a cap and the removal has no step. Each such
@@ -308,8 +308,13 @@ HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstra
 			float east;
 			sectorDirection(sector, ch, sh, north, east);
 
-			if (vel_in[0] * north + vel_in[1] * east - cap <= kToleranceM_s) {
-				continue; // this cap did not limit the setpoint
+			// a sector bounds the feed-forward when its cap cut the velocity setpoint, or when the velocity
+			// setpoint leaves the hook at its cap (the projection onto another sector can push it there)
+			const bool cut_the_input = (vel_in[0] * north + vel_in[1] * east - cap) > kToleranceM_s;
+			const bool output_at_cap = (vel[0] * north + vel[1] * east - cap) >= -kToleranceM_s;
+
+			if (!cut_the_input && !output_at_cap) {
+				continue;
 			}
 
 			float allowed = 0.f;
