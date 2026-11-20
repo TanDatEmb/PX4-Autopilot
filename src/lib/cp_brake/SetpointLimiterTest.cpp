@@ -43,6 +43,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
 #include "ReasonFlags.hpp"
 #include "SetpointLimiter.hpp"
@@ -330,127 +331,6 @@ TEST(SetpointLimiterTest, AHalfPlaneAtExactlyNinetyDegreesLeavesTheMotionAlone)
 	EXPECT_EQ(vel[1], 0.f);
 }
 
-TEST(SetpointLimiterTest, RemovingTheFeedForwardTowardOneSectorDoesNotBringItBackTowardAnother)
-{
-	// the reproduction of the review: two caps of 1 m/s 95 degrees apart (an obtuse angle), the vehicle at
-	// both caps. Removing the feed-forward toward sector 19 must not leave any toward sector 0.
-	cp_brake::HookConstraint c = openConstraint(0.f);
-	c.caps_m_s[0] = 1.f;
-	c.caps_m_s[19] = 1.f;
-	const float state[2] = {1.f, 1.09131f};
-	float vel[2] = {5.f, 5.f};
-	float acc[2] = {2.f, 2.f};
-
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
-	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
-
-	for (const int sector : {0, 19}) {
-		float u[2];
-		direction(sector, 0.f, u);
-		EXPECT_LE(acc[0] * u[0] + acc[1] * u[1], 1e-3f) << "sector " << sector;
-	}
-}
-
-TEST(SetpointLimiterTest, TheFeedForwardNeverExceedsWhatEachLimitingSectorAllows)
-{
-	// for every sector whose cap cut the velocity setpoint or holds its output at the cap: the feed-forward
-	// toward it is at most what is left after the removal in proportion to how close the vehicle is to the cap
-	Lcg rng{777U};
-	const cp_brake::HookContext context = flightContext();
-
-	for (int trial = 0; trial < 3000; ++trial) {
-		const float heading = (rng.next() - 0.5f) * 14.f;
-		cp_brake::HookConstraint c = openConstraint(heading);
-
-		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
-			const float pick = rng.next();
-			c.caps_m_s[i] = (pick < 0.25f) ? 0.f : ((pick < 0.5f) ? rng.next() * 12.f : 12.f);
-		}
-
-		const float speed = rng.next() * 12.f;
-		const float angle = rng.next() * 2.f * kPi;
-		const float in[2] = {speed * cosf(angle), speed * sinf(angle)};
-		const float acc_in[2] = {(rng.next() - 0.5f) * 8.f, (rng.next() - 0.5f) * 8.f};
-		const float state[2] = {(rng.next() - 0.5f) * 12.f, (rng.next() - 0.5f) * 12.f};
-		float vel[2] = {in[0], in[1]};
-		float acc[2] = {acc_in[0], acc_in[1]};
-		cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
-		SCOPED_TRACE(::testing::Message() << "trial " << trial);
-		ASSERT_TRUE(std::isfinite(acc[0]) && std::isfinite(acc[1]));
-
-		for (int sector = 0; sector < static_cast<int>(cp_brake::kSectorCount); ++sector) {
-			float u[2];
-			direction(sector, heading, u);
-			const float cap = c.caps_m_s[sector];
-
-			const bool cut_the_input = in[0] * u[0] + in[1] * u[1] - cap > 1e-4f;
-			const bool output_at_cap = vel[0] * u[0] + vel[1] * u[1] - cap >= -1e-4f;
-
-			if (cap > speed + 1e-4f || !(cut_the_input || output_at_cap)) {
-				continue; // this cap neither cut the velocity setpoint nor holds the output
-			}
-
-			const float toward_in = acc_in[0] * u[0] + acc_in[1] * u[1];
-			const float speed_toward = state[0] * u[0] + state[1] * u[1];
-			const float closeness = (cap <= 0.f) ? 1.f : ((speed_toward <= 0.f) ? 0.f : ((speed_toward >= cap) ? 1.f : speed_toward / cap));
-			const float allowed = (toward_in > 0.f) ? (1.f - closeness) * toward_in : 0.f;
-			EXPECT_LE(acc[0] * u[0] + acc[1] * u[1], allowed + 2e-3f) << "sector " << sector;
-		}
-	}
-}
-
-TEST(SetpointLimiterTest, ASectorThatTheVelocityProjectionPushesToItsCapBoundsTheFeedForwardToo)
-{
-	// the second reproduction of the review: sector 0 cuts the setpoint (5, 1.3); the projection leaves the
-	// output at (1, 1.09), at the cap of sector 19 although the input did not exceed it. The vehicle is at
-	// that cap, so the feed-forward toward sector 19 must go.
-	cp_brake::HookConstraint c = openConstraint(0.f);
-	c.caps_m_s[0] = 1.f;
-	c.caps_m_s[19] = 1.f;
-	const float state[2] = {1.f, 1.09131f};
-	float vel[2] = {5.f, 1.3f};
-	float acc[2] = {0.f, 2.f};
-
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
-	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
-	float u[2];
-	direction(19, 0.f, u);
-	EXPECT_LE(vel[0] * u[0] + vel[1] * u[1], 1.f + 1e-3f);
-	EXPECT_LE(acc[0] * u[0] + acc[1] * u[1], 1e-3f);
-}
-
-TEST(SetpointLimiterTest, TheFeedForwardIsBoundWhenTheVelocityNeedsNoProjection)
-{
-	// the third reproduction of the review: the setpoint and the vehicle are exactly at the cap of sector 0
-	// (1 m/s), the velocity needs no change, and the feed-forward still pushes toward it
-	cp_brake::HookConstraint c = openConstraint(0.f);
-	c.caps_m_s[0] = 1.f;
-	const float state[2] = {1.f, 0.5f};
-	float vel[2] = {1.f, 0.5f};
-	float acc[2] = {2.f, 0.f};
-
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
-	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited); // only the acceleration changed, and it has to be written back
-	EXPECT_EQ(vel[0], 1.f);
-	EXPECT_EQ(vel[1], 0.5f);
-	EXPECT_LE(acc[0], 1e-3f);
-	EXPECT_NEAR(acc[1], 0.f, 1e-3f);
-}
-
-TEST(SetpointLimiterTest, AZeroVelocityCommandAgainstACapOfZeroStillRemovesTheFeedForwardTowardIt)
-{
-	cp_brake::HookConstraint c = openConstraint(0.f);
-	c.caps_m_s[0] = 0.f;
-	const float state[2] = {0.f, 0.f};
-	float vel[2] = {0.f, 0.f};
-	float acc[2] = {2.f, 1.f};
-
-	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
-	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
-	EXPECT_LE(acc[0], 1e-3f);
-	EXPECT_NEAR(acc[1], 1.f, 1e-3f); // along the obstacle: untouched
-}
-
 TEST(SetpointLimiterTest, ASetpointWellInsideEveryCapChangesNothingAndIsClear)
 {
 	cp_brake::HookConstraint c = openConstraint(0.f);
@@ -464,4 +344,143 @@ TEST(SetpointLimiterTest, ASetpointWellInsideEveryCapChangesNothingAndIsClear)
 	EXPECT_EQ(vel[0], 1.f);
 	EXPECT_EQ(acc[0], 2.f);
 	EXPECT_EQ(acc[1], 1.f);
+}
+
+TEST(SetpointLimiterTest, TheWholeFeedForwardIsClearedWhenTheVelocityIsLimited)
+{
+	// ADR 0020: when any sector limits the velocity setpoint, the horizontal feed-forward is cleared, the
+	// part along the obstacle and the part away from it included
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 3.f;
+	const float state[2] = {1.f, 0.f};
+
+	for (const auto &ff : {std::pair<float, float>{2.f, 1.f}, {2.f, 0.f}, {-2.f, 0.5f}, {0.f, -1.f}}) {
+		float vel[2] = {8.f, 2.f};
+		float acc[2] = {ff.first, ff.second};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+		EXPECT_EQ(acc[0], 0.f);
+		EXPECT_EQ(acc[1], 0.f);
+	}
+}
+
+TEST(SetpointLimiterTest, TheFeedForwardIsUnchangedWhenNoSectorLimits)
+{
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 5.f;
+	const float state[2] = {0.5f, 0.f};
+
+	// well inside every cap
+	{
+		float vel[2] = {1.f, 0.5f};
+		float acc[2] = {2.f, 1.f};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
+		EXPECT_EQ(acc[0], 2.f);
+		EXPECT_EQ(acc[1], 1.f);
+	}
+
+	// exactly at a cap with nothing to project: no sector limits the setpoint, so nothing is cleared (the
+	// rule of ADR 0020 has no gradation)
+	{
+		c.caps_m_s[0] = 1.f;
+		float vel[2] = {1.f, 0.5f};
+		float acc[2] = {2.f, 0.f};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
+		EXPECT_EQ(acc[0], 2.f);
+		EXPECT_EQ(acc[1], 0.f);
+	}
+}
+
+TEST(SetpointLimiterTest, AFeedForwardThatIsNotANumberStaysNotANumberWhenTheVelocityIsLimited)
+{
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 3.f;
+	const float state[2] = {0.f, 0.f};
+
+	for (const auto &ff : {std::pair<float, float>{NAN, NAN}, {NAN, 1.f}, {1.f, NAN}, {INFINITY, 0.f}}) {
+		float vel[2] = {8.f, 0.f};
+		float acc[2] = {ff.first, ff.second};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+		EXPECT_NEAR(vel[0], 3.f, 1e-3f);
+
+		// not a number or not finite: not a feed-forward, left as it was
+		EXPECT_TRUE(std::isnan(acc[0]) == std::isnan(ff.first));
+		EXPECT_TRUE(std::isnan(acc[1]) == std::isnan(ff.second));
+		EXPECT_TRUE(std::isinf(acc[0]) == std::isinf(ff.first));
+	}
+}
+
+TEST(SetpointLimiterTest, ThreeCallsWithTheSameInputsGiveTheSameResult)
+{
+	// PX4 calls the position controller up to three times per cycle, each time with the setpoint it sets
+	cp_brake::HookConstraint c = openConstraint(0.4f);
+	c.caps_m_s[2] = 2.f;
+	c.caps_m_s[20] = 3.f;
+	const float state[2] = {1.f, 1.f};
+	float first_vel[2] = {0.f, 0.f};
+	float first_acc[2] = {0.f, 0.f};
+
+	for (int call = 0; call < 3; ++call) {
+		float vel[2] = {7.f, 3.f};
+		float acc[2] = {1.5f, -0.5f};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+
+		if (call == 0) {
+			first_vel[0] = vel[0];
+			first_vel[1] = vel[1];
+			first_acc[0] = acc[0];
+			first_acc[1] = acc[1];
+
+		} else {
+			EXPECT_EQ(vel[0], first_vel[0]);
+			EXPECT_EQ(vel[1], first_vel[1]);
+			EXPECT_EQ(acc[0], first_acc[0]);
+			EXPECT_EQ(acc[1], first_acc[1]);
+		}
+	}
+
+	EXPECT_EQ(first_acc[0], 0.f);
+	EXPECT_EQ(first_acc[1], 0.f);
+}
+
+TEST(SetpointLimiterTest, TheFeedForwardIsClearedExactlyWhenTheVelocityIsLimited)
+{
+	Lcg rng{4242U};
+	const cp_brake::HookContext context = flightContext();
+
+	for (int trial = 0; trial < 3000; ++trial) {
+		const float heading = (rng.next() - 0.5f) * 14.f;
+		cp_brake::HookConstraint c = openConstraint(heading);
+
+		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
+			const float pick = rng.next();
+			c.caps_m_s[i] = (pick < 0.3f) ? 0.f : ((pick < 0.6f) ? rng.next() * 12.f : 12.f);
+		}
+
+		const float speed = rng.next() * 12.f;
+		const float angle = rng.next() * 2.f * kPi;
+		float vel[2] = {speed * cosf(angle), speed * sinf(angle)};
+		const float vel_in[2] = {vel[0], vel[1]};
+		const float acc_in[2] = {(rng.next() - 0.5f) * 8.f, (rng.next() - 0.5f) * 8.f};
+		float acc[2] = {acc_in[0], acc_in[1]};
+		const float state[2] = {(rng.next() - 0.5f) * 12.f, (rng.next() - 0.5f) * 12.f};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
+		SCOPED_TRACE(::testing::Message() << "trial " << trial);
+
+		if (r.action == cp_brake::HookAction::kLimited) {
+			EXPECT_EQ(acc[0], 0.f);
+			EXPECT_EQ(acc[1], 0.f);
+
+		} else {
+			EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
+			EXPECT_EQ(acc[0], acc_in[0]);
+			EXPECT_EQ(acc[1], acc_in[1]);
+			EXPECT_EQ(vel[0], vel_in[0]);
+			EXPECT_EQ(vel[1], vel_in[1]);
+		}
+	}
 }

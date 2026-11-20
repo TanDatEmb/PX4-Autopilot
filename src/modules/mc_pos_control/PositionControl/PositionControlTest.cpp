@@ -833,52 +833,8 @@ TEST_F(CollisionLimiterTest, TheRecordHoldsTheSetpointsBeforeAndAfter)
 	EXPECT_NEAR(record().vel_sp_out_m_s[1], 2.f, 1e-4f);
 	EXPECT_FLOAT_EQ(record().vel_sp_out_m_s[0], _output.vx);
 	EXPECT_FLOAT_EQ(record().vel_sp_out_m_s[1], _output.vy);
-}
-
-TEST_F(CollisionLimiterFeedForwardTest, TheFeedForwardTowardALimitingSectorFadesOutAsTheVehicleReachesTheCap)
-{
-	// cap 4 m/s ahead, the trajectory asks 8 m/s and accelerates at 2 m/s^2 (and 1.5 m/s^2 sideways)
-	const struct {
-		float speed_toward_m_s;
-		float expected_ff_m_s2;
-	} cases[] = {{-2.f, 2.f}, {0.f, 2.f}, {1.f, 1.5f}, {2.f, 1.f}, {3.f, 0.5f}, {4.f, 0.f}, {6.f, 0.f}};
-
-	for (const auto &c : cases) {
-		SCOPED_TRACE(c.speed_toward_m_s);
-		resetInputs();
-		setVelocity(8.f, 0.f);
-		setFeedForward(2.f, 1.5f);
-		_constraint.caps_m_s[0] = 4.f;
-		_states.velocity = Vector3f(c.speed_toward_m_s, 0.f, 0.f);
-		run();
-		EXPECT_TRUE(_ok);
-		EXPECT_NEAR(_output.acceleration[0], c.expected_ff_m_s2, 1e-5f);
-		EXPECT_NEAR(_output.acceleration[1], 1.5f, 1e-5f); // along the obstacle: untouched
-	}
-}
-
-TEST_F(CollisionLimiterFeedForwardTest, AZeroCapRemovesTheFeedForwardTowardItWhateverTheVehicleDoes)
-{
-	for (const float speed : {-2.f, 0.f, 2.f}) {
-		SCOPED_TRACE(speed);
-		resetInputs();
-		setVelocity(8.f, 0.f);
-		setFeedForward(2.f, 0.f);
-		_constraint.caps_m_s[0] = 0.f;
-		_states.velocity = Vector3f(speed, 0.f, 0.f);
-		run();
-		EXPECT_NEAR(_output.acceleration[0], 0.f, 1e-6f);
-		EXPECT_NEAR(_output.vx, 0.f, 1e-6f);
-	}
-}
-
-TEST_F(CollisionLimiterFeedForwardTest, FeedForwardAwayFromTheSectorIsKept)
-{
-	setVelocity(8.f, 0.f);
-	setFeedForward(-2.f, 0.f);
-	_constraint.caps_m_s[0] = 4.f;
-	run();
-	EXPECT_NEAR(_output.acceleration[0], -2.f, 1e-6f);
+	EXPECT_EQ(record().acc_sp_out_m_s2[0], 0.f); // limiting clears the feed-forward
+	EXPECT_EQ(record().acc_sp_out_m_s2[1], 0.f);
 }
 
 TEST_F(CollisionLimiterFeedForwardTest, AVehicleVelocityThatIsNotANumberRemovesTheFeedForwardTowardTheSector)
@@ -1199,12 +1155,43 @@ TEST_F(CollisionLimiterTest, TwoCapsAtOnceLimitBothComponents)
 	EXPECT_NEAR(_output.vy, 2.f, 1e-3f);
 }
 
-TEST_F(CollisionLimiterFeedForwardTest, FeedForwardAwayFromTheSectorIsKeptWhileTheVehicleMovesTowardIt)
+TEST_F(CollisionLimiterFeedForwardTest, TheWholeFeedForwardIsClearedWhenTheHookLimitsTheVelocity)
 {
-	setVelocity(8.f, 0.f);
-	setFeedForward(-2.f, 0.f);
-	_constraint.caps_m_s[0] = 4.f;
-	_states.velocity = Vector3f(2.f, 0.f, 0.f); // half way to the cap
+	// ADR 0020: any limiting sector clears the horizontal feed-forward: the part toward it, along it and away
+	// from it, whatever the vehicle velocity is
+	const struct {
+		float north;
+		float east;
+		float speed_toward_m_s;
+	} cases[] = {{2.f, 1.5f, 0.f}, {2.f, 0.f, 2.f}, {-2.f, 0.5f, 3.f}, {0.f, -1.f, -2.f}, {2.f, 1.5f, 6.f}};
+
+	for (const auto &c : cases) {
+		SCOPED_TRACE(c.speed_toward_m_s);
+		resetInputs();
+		setVelocity(8.f, 0.f);
+		setFeedForward(c.north, c.east);
+		_constraint.caps_m_s[0] = 4.f;
+		_states.velocity = Vector3f(c.speed_toward_m_s, 0.f, 0.f);
+		run();
+		EXPECT_TRUE(_ok);
+		EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
+		EXPECT_EQ(_output.acceleration[0], 0.f);
+		EXPECT_EQ(_output.acceleration[1], 0.f);
+		EXPECT_EQ(record().acc_sp_out_m_s2[0], 0.f);
+		EXPECT_EQ(record().acc_sp_out_m_s2[1], 0.f);
+		EXPECT_NEAR(_output.vx, 4.f, 1e-4f);
+	}
+}
+
+TEST_F(CollisionLimiterFeedForwardTest, TheFeedForwardIsUnchangedWhenNoSectorLimits)
+{
+	setVelocity(2.f, 1.f);
+	setFeedForward(2.f, 1.5f);
+	_constraint.caps_m_s[0] = 3.f; // above the speed: no sector limits
+	_states.velocity = Vector3f(1.f, 0.f, 0.f);
 	run();
-	EXPECT_NEAR(_output.acceleration[0], -2.f, 1e-6f);
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kClear);
+	EXPECT_EQ(_output.acceleration[0], 2.f);
+	EXPECT_EQ(_output.acceleration[1], 1.5f);
+	expectSameAsBaseline();
 }
