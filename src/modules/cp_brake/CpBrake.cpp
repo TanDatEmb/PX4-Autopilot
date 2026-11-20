@@ -45,11 +45,24 @@
 static_assert(cp_brake::kReasonInvalidConfig == cp_brake_constraints_s::REASON_INVALID_CONFIG, "reason flag");
 static_assert(cp_brake::kReasonFrameInvalid == cp_brake_constraints_s::REASON_FRAME_INVALID, "reason flag");
 static_assert(cp_brake::kReasonDataInvalid == cp_brake_constraints_s::REASON_DATA_INVALID, "reason flag");
+static_assert(cp_brake::kReasonSampleStale == cp_brake_constraints_s::REASON_SAMPLE_STALE, "reason flag");
+static_assert(cp_brake::kReasonNoHeading == cp_brake_constraints_s::REASON_NO_HEADING, "reason flag");
+static_assert(cp_brake::kReasonUnqualified == cp_brake_constraints_s::REASON_UNQUALIFIED, "reason flag");
+static_assert(cp_brake::kReasonBlocked == cp_brake_constraints_s::REASON_BLOCKED, "reason flag");
+static_assert(cp_brake::kReasonAckRequired == cp_brake_constraints_s::REASON_ACK_REQUIRED, "reason flag");
+static_assert(cp_brake::kReasonOverride == cp_brake_constraints_s::REASON_OVERRIDE, "reason flag");
+static_assert(cp_brake::kStateDisabled == cp_brake_constraints_s::STATE_DISABLED, "state");
+static_assert(cp_brake::kStateObserverOnly == cp_brake_constraints_s::STATE_OBSERVER_ONLY, "state");
+static_assert(cp_brake::kStateNotReady == cp_brake_constraints_s::STATE_NOT_READY, "state");
+static_assert(cp_brake::kStateActiveClear == cp_brake_constraints_s::STATE_ACTIVE_CLEAR, "state");
+static_assert(cp_brake::kStateBraking == cp_brake_constraints_s::STATE_BRAKING, "state");
+static_assert(cp_brake::kStateSafeStop == cp_brake_constraints_s::STATE_SAFE_STOP, "state");
+static_assert(cp_brake::kTakeoffStateFlight == takeoff_status_s::TAKEOFF_STATE_FLIGHT, "takeoff state");
 static_assert(cp_brake::kSectorCount == 72, "sector count of obstacle_distance and cp_brake_constraints");
 
 CpBrake::CpBrake() :
 	ModuleParams(nullptr),
-	WorkItem(MODULE_NAME, px4::wq_configurations::lp_default)
+	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::lp_default)
 {
 }
 
@@ -61,6 +74,9 @@ bool CpBrake::init()
 	}
 
 	updateConfig();
+
+	// a stopped obstacle_distance sends nothing, so its age is only noticed by a periodic evaluation
+	ScheduleOnInterval(kEvaluationIntervalUs);
 	return true;
 }
 
@@ -88,11 +104,6 @@ void CpBrake::updateConfig()
 
 	_config_faults = (_param_cpb_en.get() == 1) ? cp_brake::checkConfig(_config) : 0U;
 
-	// what status reports before an input arrives; publish() recomputes both for every input
-	_state = (_param_cpb_en.get() == 1) ? cp_brake_constraints_s::STATE_NOT_READY
-		 : cp_brake_constraints_s::STATE_DISABLED;
-	_reason_flags = (_config_faults != 0U) ? cp_brake::kReasonInvalidConfig : 0U;
-
 	// a changed limiter parameter starts the limiter again from zero (fail closed)
 	_limiter = cp_brake::CapLimiter(_config.limiter);
 }
@@ -100,6 +111,7 @@ void CpBrake::updateConfig()
 void CpBrake::Run()
 {
 	if (should_exit()) {
+		ScheduleClear();
 		_obstacle_sub.unregisterCallback();
 		exit_and_cleanup();
 		return;
@@ -111,11 +123,27 @@ void CpBrake::Run()
 		updateConfig();
 	}
 
+	takeoff_status_s takeoff_status;
+
+	if (_takeoff_status_sub.update(&takeoff_status)) {
+		_takeoff_state = takeoff_status.takeoff_state;
+	}
+
+	vehicle_local_position_s local_position;
+
+	if (_local_position_sub.update(&local_position)) {
+		_px4_state_valid = local_position.xy_valid && local_position.v_xy_valid
+				   && local_position.heading_good_for_control;
+	}
+
 	obstacle_distance_s input;
 
 	while (_obstacle_sub.update(&input)) {
 		process(input);
 	}
+
+	// every run, whatever woke it: a new input or the evaluation interval
+	evaluate();
 }
 
 void CpBrake::process(const obstacle_distance_s &input)
@@ -124,8 +152,8 @@ void CpBrake::process(const obstacle_distance_s &input)
 
 	const cp_brake::ObstacleInput view{input.frame, input.increment, input.angle_offset, input.min_distance,
 					   input.max_distance, input.distances, cp_brake::kInputSectorCount};
-	const uint32_t input_flags = cp_brake::checkObstacleInput(view);
-	const bool input_ok = (input_flags == 0U);
+	_input_flags = cp_brake::checkObstacleInput(view);
+	const bool input_ok = (_input_flags == 0U);
 
 	if (!input_ok) {
 		++_input_rejected_count;
@@ -149,41 +177,65 @@ void CpBrake::process(const obstacle_distance_s &input)
 	if (input_ok) {
 		_last_sample_timestamp = input.timestamp;
 	}
-
-	publish(input, input_flags, input_ok);
 }
 
-void CpBrake::publish(const obstacle_distance_s &input, uint32_t input_flags, bool input_ok)
+void CpBrake::evaluate()
 {
 	const hrt_abstime now = hrt_absolute_time();
-	const bool enabled = (_param_cpb_en.get() == 1);
-	const bool usable = enabled && (_config_faults == 0U) && input_ok;
+	const bool has_sample = (_last_sample_timestamp != 0U);
 
-	_reason_flags = input_flags | ((_config_faults != 0U) ? cp_brake::kReasonInvalidConfig : 0U);
+	// age of the latest accepted map; a map stamped after now gives a negative age and counts as stale
+	float sample_age_s = 0.f;
 
-	// provisional states of this step; the state machine is a separate step
-	if (!enabled) {
-		_state = cp_brake_constraints_s::STATE_DISABLED;
-
-	} else if (!usable) {
-		_state = cp_brake_constraints_s::STATE_NOT_READY;
-
-	} else {
-		_state = cp_brake_constraints_s::STATE_ACTIVE_CLEAR;
+	if (has_sample) {
+		sample_age_s = static_cast<float>(static_cast<int64_t>(now) - static_cast<int64_t>(_last_sample_timestamp)) * 1e-6f;
 	}
+
+	// what the caps allow: some cap below the maximum speed limits, and no cap above zero means blocked
+	bool limiting = false;
+	bool any_motion = false;
+
+	for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
+		const float cap = _limiter.caps()[i];
+		limiting = limiting || !(cap >= _config.stopping.max_speed_m_s);
+		any_motion = any_motion || (cap > 0.f);
+	}
+
+	cp_brake::StateInputs inputs{};
+	inputs.enabled = (_param_cpb_en.get() == 1);
+	inputs.config_faults = _config_faults;
+	inputs.input_flags = _input_flags;
+	inputs.has_sample = has_sample;
+	inputs.sample_age_s = sample_age_s;
+	inputs.sample_age_stop_s = _config.sample_age_stop_s;
+	inputs.heading_valid = false; // no heading history until issue #94
+	inputs.px4_state_valid = _px4_state_valid;
+	inputs.takeoff_state = _takeoff_state;
+	inputs.limiting = limiting;
+	inputs.blocked = !any_motion;
+	inputs.pilot_ack = _pilot_ack;
+	inputs.pilot_override = _pilot_override;
+	inputs.safe_stop_latched = _safe_stop_latched;
+
+	const cp_brake::StateResult result = cp_brake::evaluateState(inputs);
+
+	_pilot_ack = false; // an acknowledgement is an event of one evaluation
+	_safe_stop_latched = result.safe_stop_latched;
+	_state = result.state;
+	_reason_flags = result.reason_flags;
 
 	cp_brake_constraints_s constraints{};
 	constraints.timestamp = now;
-	constraints.sample_timestamp = input.timestamp;
+	constraints.sample_timestamp = _last_sample_timestamp;
 	constraints.heading_rad = 0.f;
 	constraints.heading_valid = false; // no heading history yet
 	constraints.enforcement_active = false; // no hook yet
-	constraints.valid = usable;
+	constraints.valid = result.constraint_valid;
 	constraints.state = _state;
 	constraints.reason_flags = _reason_flags;
 
 	for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
-		constraints.caps_m_s[i] = usable ? _limiter.caps()[i] : 0.f;
+		constraints.caps_m_s[i] = result.constraint_valid ? _limiter.caps()[i] : 0.f;
 	}
 
 	_constraints_pub.publish(constraints);
@@ -196,7 +248,7 @@ void CpBrake::publish(const obstacle_distance_s &input, uint32_t input_flags, bo
 	// age of the last sample, saturated to the 32 bit field
 	uint64_t sample_age_us = 0U;
 
-	if (_last_sample_timestamp != 0U && now > _last_sample_timestamp) {
+	if (has_sample && now > _last_sample_timestamp) {
 		sample_age_us = now - _last_sample_timestamp;
 	}
 
@@ -240,6 +292,13 @@ int CpBrake::print_status()
 		 static_cast<unsigned>(_reason_flags), static_cast<unsigned>(_config_faults));
 	PX4_INFO("inputs: %u, rejected: %u", static_cast<unsigned>(_input_count),
 		 static_cast<unsigned>(_input_rejected_count));
+
+	const hrt_abstime now = hrt_absolute_time();
+	const double sample_age_s = (_last_sample_timestamp != 0U && now > _last_sample_timestamp)
+				    ? static_cast<double>(now - _last_sample_timestamp) * 1e-6 : 0.0;
+	PX4_INFO("takeoff state: %u, px4 state valid: %d, safe stop latched: %d, sample age: %.3f s",
+		 static_cast<unsigned>(_takeoff_state), static_cast<int>(_px4_state_valid),
+		 static_cast<int>(_safe_stop_latched), sample_age_s);
 	return 0;
 }
 
@@ -257,10 +316,13 @@ int CpBrake::print_usage(const char *reason)
 	PRINT_MODULE_DESCRIPTION(
 		R"DESCR_STR(
 ### Description
-Per-sector speed caps of the collision prevention (collision-prevention ICD-CP-04). Reads
-obstacle_distance, checks the configuration and the input, applies the stopping model and the dwell
-and rise limiter, and publishes cp_brake_constraints and cp_brake_status. It does not enforce the
-caps: the limiter hook is separate. Started at boot when CPB_EN is 1.
+Per-sector speed caps and operational state of the collision prevention (collision-prevention
+ICD-CP-04). Reads obstacle_distance, checks the configuration and the input, applies the stopping
+model and the dwell and rise limiter, runs the state machine (DISABLED, OBSERVER_ONLY, NOT_READY,
+ACTIVE_CLEAR, BRAKING, SAFE_STOP), and publishes cp_brake_constraints and cp_brake_status. The
+evaluation also runs on a fixed interval, so a stopped input is noticed by its age. It does not
+enforce the caps: the limiter hook is separate. It never requests a mode. Started at boot when
+CPB_EN is 1.
 
 )DESCR_STR");
 

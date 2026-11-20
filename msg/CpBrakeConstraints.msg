@@ -21,3 +21,9 @@ uint32 reason_flags		# why the state is what it is (the lib/cp_brake ReasonFlags
 uint32 REASON_INVALID_CONFIG = 1
 uint32 REASON_FRAME_INVALID = 2
 uint32 REASON_DATA_INVALID = 4
+uint32 REASON_SAMPLE_STALE = 8		# no accepted map, or its age reached CPB_AGE_STOP
+uint32 REASON_NO_HEADING = 16		# no heading for sample_timestamp
+uint32 REASON_UNQUALIFIED = 32		# the PX4 estimator or heading is invalid, no CP action (ADR 0007)
+uint32 REASON_BLOCKED = 64		# the caps leave no horizontal motion
+uint32 REASON_ACK_REQUIRED = 128	# a safe stop is latched and waits for the pilot acknowledgement
+uint32 REASON_OVERRIDE = 256		# a pilot override is active, the constraint is not enforced
