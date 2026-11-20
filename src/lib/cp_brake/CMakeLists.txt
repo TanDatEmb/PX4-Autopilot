@@ -34,14 +34,17 @@
 px4_add_library(cp_brake_model
 	CapLimiter.cpp
 	ConfigCheck.cpp
+	HeadingHistory.cpp
 	InputCheck.cpp
 	StateMachine.cpp
 	StoppingModel.cpp
+	TimeSync.cpp
 )
 target_include_directories(cp_brake_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 px4_add_unit_gtest(SRC CapLimiterTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC ChecksTest.cpp LINKLIBS cp_brake_model)
+px4_add_unit_gtest(SRC HeadingHistoryTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC ModeRequestGuardTest.cpp LINKLIBS cp_brake_model)
 if(TARGET unit-ModeRequestGuard)
 	# the guard reads the sources of the library and of the module
@@ -51,3 +54,4 @@ if(TARGET unit-ModeRequestGuard)
 endif()
 px4_add_unit_gtest(SRC StateMachineTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC StoppingModelTest.cpp LINKLIBS cp_brake_model)
+px4_add_unit_gtest(SRC TimeSyncTest.cpp LINKLIBS cp_brake_model)

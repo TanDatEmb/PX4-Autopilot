@@ -33,6 +33,7 @@
 
 #include "CpBrake.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -51,6 +52,7 @@ static_assert(cp_brake::kReasonUnqualified == cp_brake_constraints_s::REASON_UNQ
 static_assert(cp_brake::kReasonBlocked == cp_brake_constraints_s::REASON_BLOCKED, "reason flag");
 static_assert(cp_brake::kReasonAckRequired == cp_brake_constraints_s::REASON_ACK_REQUIRED, "reason flag");
 static_assert(cp_brake::kReasonOverride == cp_brake_constraints_s::REASON_OVERRIDE, "reason flag");
+static_assert(cp_brake::kReasonTimeSync == cp_brake_constraints_s::REASON_TIME_SYNC, "reason flag");
 static_assert(cp_brake::kStateDisabled == cp_brake_constraints_s::STATE_DISABLED, "state");
 static_assert(cp_brake::kStateObserverOnly == cp_brake_constraints_s::STATE_OBSERVER_ONLY, "state");
 static_assert(cp_brake::kStateNotReady == cp_brake_constraints_s::STATE_NOT_READY, "state");
@@ -59,6 +61,35 @@ static_assert(cp_brake::kStateBraking == cp_brake_constraints_s::STATE_BRAKING, 
 static_assert(cp_brake::kStateSafeStop == cp_brake_constraints_s::STATE_SAFE_STOP, "state");
 static_assert(cp_brake::kTakeoffStateFlight == takeoff_status_s::TAKEOFF_STATE_FLIGHT, "takeoff state");
 static_assert(cp_brake::kSectorCount == 72, "sector count of obstacle_distance and cp_brake_constraints");
+
+#define CP_BRAKE_SAME_VALUE(lib, msg) static_assert(static_cast<uint8_t>(lib) == (msg), "status constant")
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kOk, cp_brake_status_s::HEADING_LOOKUP_OK);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kInvalidParams, cp_brake_status_s::HEADING_LOOKUP_INVALID_PARAMS);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kEmpty, cp_brake_status_s::HEADING_LOOKUP_EMPTY);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kBeforeFirst, cp_brake_status_s::HEADING_LOOKUP_BEFORE_FIRST);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kAfterLast, cp_brake_status_s::HEADING_LOOKUP_AFTER_LAST);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kReset, cp_brake_status_s::HEADING_LOOKUP_RESET);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kGap, cp_brake_status_s::HEADING_LOOKUP_GAP);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kNotGood, cp_brake_status_s::HEADING_LOOKUP_NOT_GOOD);
+CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kGood, cp_brake_status_s::TIME_SYNC_GOOD);
+CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kInvalidLimits, cp_brake_status_s::TIME_SYNC_INVALID_LIMITS);
+CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kNoStatus, cp_brake_status_s::TIME_SYNC_NO_STATUS);
+CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kStale, cp_brake_status_s::TIME_SYNC_STALE);
+CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kRoundTripTooLong, cp_brake_status_s::TIME_SYNC_ROUND_TRIP_TOO_LONG);
+CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kOffsetDeviation, cp_brake_status_s::TIME_SYNC_OFFSET_DEVIATION);
+#undef CP_BRAKE_SAME_VALUE
+static_assert(cp_brake_status_s::TIME_SYNC_NOT_JUDGED > cp_brake_status_s::TIME_SYNC_OFFSET_DEVIATION,
+	      "the value of a gate that is off must not collide with a verdict");
+
+namespace
+{
+// ADR 0003: hardware (NuttX) runs the uXRCE-DDS time synchronization; only simulation and replay do not
+#if defined(__PX4_NUTTX)
+constexpr bool kTimeSyncRequired{true};
+#else
+constexpr bool kTimeSyncRequired{false};
+#endif
+} // namespace
 
 CpBrake::CpBrake() :
 	ModuleParams(nullptr),
@@ -73,10 +104,16 @@ bool CpBrake::init()
 		return false;
 	}
 
+	if (!_local_position_sub.registerCallback()) {
+		PX4_ERR("callback registration failed");
+		_obstacle_sub.unregisterCallback();
+		return false;
+	}
+
 	updateConfig();
 
 	// a stopped obstacle_distance sends nothing, so its age is only noticed by a periodic evaluation
-	ScheduleOnInterval(kEvaluationIntervalUs);
+	ScheduleDelayed(kEvaluationIntervalUs);
 	return true;
 }
 
@@ -102,6 +139,35 @@ void CpBrake::updateConfig()
 	_config.mpc_xy_vel_max_m_s = _param_mpc_xy_vel_max.get();
 	_config.second_obstacle_source = second_source;
 
+	// the history of the heading of the sample time: a changed depth or gap limit starts it again, an
+	// unrelated parameter update does not (it would leave no heading for the next second)
+	const cp_brake::HeadingHistoryParams history_params{_param_cpb_hdg_depth.get(), _param_cpb_hdg_gap.get()};
+
+	const float old_gap_s = _heading_history.params().max_gap_s;
+	const bool gap_changed = (history_params.max_gap_s < old_gap_s) || (history_params.max_gap_s > old_gap_s)
+				 || !std::isfinite(history_params.max_gap_s);
+
+	if (history_params.depth != _heading_history.params().depth || gap_changed) {
+		_heading_history.reset(history_params); // not a temporary: it would not fit the NuttX stack frame
+	}
+
+	_config.heading_history = history_params;
+	_config.time_sync_limits = cp_brake::TimeSyncLimits{_param_cpb_sync_rtt.get(), _param_cpb_sync_off.get(),
+			_param_cpb_sync_age.get()};
+
+	// UXRCE_DDS_SYNCT off is the simulation and replay profile (ADR 0003): there is no timesync_status
+	// to judge. A missing parameter counts as on, so the gate fails closed.
+	_time_sync_enabled = true;
+	const param_t synct_handle = param_find("UXRCE_DDS_SYNCT");
+
+	if (synct_handle != PARAM_INVALID) {
+		int32_t synct = 1;
+		_time_sync_enabled = (param_get(synct_handle, &synct) != PX4_OK) || (synct != 0);
+	}
+
+	_config.time_sync_enabled = _time_sync_enabled;
+	_config.time_sync_required = kTimeSyncRequired;
+
 	_config_faults = (_param_cpb_en.get() == 1) ? cp_brake::checkConfig(_config) : 0U;
 
 	// a changed limiter parameter starts the limiter again from zero (fail closed)
@@ -113,6 +179,7 @@ void CpBrake::Run()
 	if (should_exit()) {
 		ScheduleClear();
 		_obstacle_sub.unregisterCallback();
+		_local_position_sub.unregisterCallback();
 		exit_and_cleanup();
 		return;
 	}
@@ -129,21 +196,49 @@ void CpBrake::Run()
 		_takeoff_state = takeoff_status.takeoff_state;
 	}
 
+	processHeadingAndTimeSync();
+
+	obstacle_distance_s input;
+	bool new_input = false;
+
+	while (_obstacle_sub.update(&input)) {
+		process(input);
+		new_input = true;
+	}
+
+	// a new input, or the evaluation interval has run out; the heading samples wake the module much
+	// more often than that, and only keep the history
+	if (new_input || hrt_absolute_time() >= _next_evaluation) {
+		evaluate();
+	}
+}
+
+void CpBrake::processHeadingAndTimeSync()
+{
 	vehicle_local_position_s local_position;
 
 	if (_local_position_sub.update(&local_position)) {
 		_px4_state_valid = local_position.xy_valid && local_position.v_xy_valid
 				   && local_position.heading_good_for_control;
+
+		// keyed by the sample time of the estimate, not by the time it was published
+		if (_heading_history.add(local_position.timestamp_sample, local_position.heading,
+					 local_position.heading_reset_counter, local_position.heading_good_for_control)) {
+			++_heading_sample_count;
+
+		} else {
+			++_heading_rejected_count;
+		}
 	}
 
-	obstacle_distance_s input;
+	for (auto &subscription : _timesync_status_subs) {
+		timesync_status_s status;
 
-	while (_obstacle_sub.update(&input)) {
-		process(input);
+		if (subscription.update(&status) && status.source_protocol == timesync_status_s::SOURCE_PROTOCOL_DDS) {
+			_time_sync_status = cp_brake::TimeSyncStatus{status.timestamp, status.observed_offset,
+					    status.estimated_offset, status.round_trip_time};
+		}
 	}
-
-	// every run, whatever woke it: a new input or the evaluation interval
-	evaluate();
 }
 
 void CpBrake::process(const obstacle_distance_s &input)
@@ -159,11 +254,34 @@ void CpBrake::process(const obstacle_distance_s &input)
 		++_input_rejected_count;
 	}
 
+	if (input_ok) {
+		// the time alignment of this map, judged now: PX4 converted its timestamp with the offset of
+		// the latest exchange. With UXRCE_DDS_SYNCT off (simulation) there is nothing to judge.
+		if (_time_sync_enabled) {
+			_time_sync_verdict = cp_brake::judgeTimeSync(_time_sync_status, hrt_absolute_time(),
+					     _config.time_sync_limits);
+			_time_sync_good = (_time_sync_verdict == cp_brake::TimeSyncVerdict::kGood);
+
+		} else {
+			_time_sync_good = true;
+		}
+
+		if (!_time_sync_good) {
+			++_time_sync_rejected_count;
+		}
+	}
+
 	if (input_ok && _config_faults == 0U && _param_cpb_en.get() == 1) {
 		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
 			const uint16_t wire = input.distances[i];
 			_raw_caps[i] = cp_brake::sectorSpeedCap(wire, input.min_distance, input.max_distance, 0.f, _config.stopping);
 			_sector_valid[i] = (wire != UINT16_MAX);
+		}
+
+		if (!_time_sync_good) {
+			// a map whose time alignment is not good is not used: every sector is unknown, never free
+			_raw_caps.fill(0.f);
+			_sector_valid.fill(false);
 		}
 
 		// a gap longer than the sample age limit gave no supporting data: no step, so the limiter
@@ -174,7 +292,8 @@ void CpBrake::process(const obstacle_distance_s &input)
 		_limiter.update(_raw_caps, _sector_valid, dt_s);
 	}
 
-	if (input_ok) {
+	// an unused map does not refresh the sample, so it ages and the stale rule applies
+	if (input_ok && _time_sync_good) {
 		_last_sample_timestamp = input.timestamp;
 	}
 }
@@ -201,6 +320,12 @@ void CpBrake::evaluate()
 		any_motion = any_motion || (cap > 0.f);
 	}
 
+	// the heading of the sample time, from the history; no map yet means no heading
+	const cp_brake::HeadingResult heading = has_sample
+			? _heading_history.at(_last_sample_timestamp)
+			: cp_brake::HeadingResult{cp_brake::HeadingLookup::kEmpty, 0.f};
+	_heading_lookup = heading.lookup;
+
 	cp_brake::StateInputs inputs{};
 	inputs.enabled = (_param_cpb_en.get() == 1);
 	inputs.config_faults = _config_faults;
@@ -208,7 +333,8 @@ void CpBrake::evaluate()
 	inputs.has_sample = has_sample;
 	inputs.sample_age_s = sample_age_s;
 	inputs.sample_age_stop_s = _config.sample_age_stop_s;
-	inputs.heading_valid = false; // no heading history until issue #94
+	inputs.heading_valid = heading.valid();
+	inputs.time_sync_good = _time_sync_good;
 	inputs.px4_state_valid = _px4_state_valid;
 	inputs.takeoff_state = _takeoff_state;
 	inputs.limiting = limiting;
@@ -227,8 +353,8 @@ void CpBrake::evaluate()
 	cp_brake_constraints_s constraints{};
 	constraints.timestamp = now;
 	constraints.sample_timestamp = _last_sample_timestamp;
-	constraints.heading_rad = 0.f;
-	constraints.heading_valid = false; // no heading history yet
+	constraints.heading_rad = heading.valid() ? heading.heading_rad : 0.f;
+	constraints.heading_valid = heading.valid();
 	constraints.enforcement_active = false; // no hook yet
 	constraints.valid = result.constraint_valid;
 	constraints.state = _state;
@@ -259,7 +385,17 @@ void CpBrake::evaluate()
 	status.config_fault_flags = _config_faults;
 	status.input_count = _input_count;
 	status.input_rejected_count = _input_rejected_count;
+	status.heading_lookup = static_cast<uint8_t>(_heading_lookup);
+	status.time_sync_verdict = _time_sync_enabled ? static_cast<uint8_t>(_time_sync_verdict)
+				   : cp_brake_status_s::TIME_SYNC_NOT_JUDGED;
+	status.heading_history_size = static_cast<uint8_t>(_heading_history.size());
+	status.heading_sample_count = _heading_sample_count;
+	status.heading_rejected_count = _heading_rejected_count;
+	status.time_sync_rejected_count = _time_sync_rejected_count;
 	_status_pub.publish(status);
+
+	_next_evaluation = now + kEvaluationIntervalUs;
+	ScheduleDelayed(kEvaluationIntervalUs);
 }
 
 int CpBrake::task_spawn(int argc, char *argv[])
@@ -299,6 +435,13 @@ int CpBrake::print_status()
 	PX4_INFO("takeoff state: %u, px4 state valid: %d, safe stop latched: %d, sample age: %.3f s",
 		 static_cast<unsigned>(_takeoff_state), static_cast<int>(_px4_state_valid),
 		 static_cast<int>(_safe_stop_latched), sample_age_s);
+	PX4_INFO("heading history: %u samples (accepted %u, refused %u), depth %d, gap limit %.3f s, lookup: %u",
+		 static_cast<unsigned>(_heading_history.size()), static_cast<unsigned>(_heading_sample_count),
+		 static_cast<unsigned>(_heading_rejected_count), static_cast<int>(_heading_history.params().depth),
+		 static_cast<double>(_heading_history.params().max_gap_s), static_cast<unsigned>(_heading_lookup));
+	PX4_INFO("time sync gate: %s, verdict: %u, maps not used: %u, map time good: %d",
+		 _time_sync_enabled ? "on" : "off (UXRCE_DDS_SYNCT=0)", static_cast<unsigned>(_time_sync_verdict),
+		 static_cast<unsigned>(_time_sync_rejected_count), static_cast<int>(_time_sync_good));
 	return 0;
 }
 
@@ -319,10 +462,11 @@ int CpBrake::print_usage(const char *reason)
 Per-sector speed caps and operational state of the collision prevention (collision-prevention
 ICD-CP-04). Reads obstacle_distance, checks the configuration and the input, applies the stopping
 model and the dwell and rise limiter, runs the state machine (DISABLED, OBSERVER_ONLY, NOT_READY,
-ACTIVE_CLEAR, BRAKING, SAFE_STOP), and publishes cp_brake_constraints and cp_brake_status. The
-evaluation also runs on a fixed interval, so a stopped input is noticed by its age. It does not
-enforce the caps: the limiter hook is separate. It never requests a mode. Started at boot when
-CPB_EN is 1.
+ACTIVE_CLEAR, BRAKING, SAFE_STOP), and publishes cp_brake_constraints and cp_brake_status. It keeps
+a timestamped history of the vehicle heading and interpolates it at the map timestamp, and it does
+not use a map whose time alignment fails the gate on timesync_status. The evaluation also runs on a
+fixed interval, so a stopped input is noticed by its age. It does not enforce the caps: the limiter
+hook is separate. It never requests a mode. Started at boot when CPB_EN is 1.
 
 )DESCR_STR");
 

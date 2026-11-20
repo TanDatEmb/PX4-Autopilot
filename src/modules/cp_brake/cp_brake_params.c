@@ -162,3 +162,71 @@ PARAM_DEFINE_FLOAT(CPB_RISE, 2.f);
  * @group Collision Prevention Brake
  */
 PARAM_DEFINE_FLOAT(CPB_CSTR_AGE, -1.f);
+
+/**
+ * Samples kept in the heading history
+ *
+ * No approved value yet (OPEN-032): -1 means not set, and cp_brake reports an invalid
+ * configuration instead of running. At least 2, at most the storage of the module (128).
+ *
+ * @min -1
+ * @max 128
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_INT32(CPB_HDG_DEPTH, -1);
+
+/**
+ * Longest span between two heading samples that may be interpolated
+ *
+ * No approved value yet (OPEN-032): -1 means not set, and cp_brake reports an invalid
+ * configuration instead of running.
+ *
+ * @unit s
+ * @min -1
+ * @max 5
+ * @decimal 3
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_HDG_GAP, -1.f);
+
+/**
+ * Longest round-trip time of a good time synchronization
+ *
+ * Limit of the time-alignment gate, read from timesync_status. No approved value yet (OPEN-033):
+ * -1 means not set, and cp_brake reports an invalid configuration instead of running.
+ *
+ * @unit s
+ * @min -1
+ * @max 5
+ * @decimal 4
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_SYNC_RTT, -1.f);
+
+/**
+ * Largest deviation of the observed time offset from its estimate
+ *
+ * Limit of the time-alignment gate, read from timesync_status. No approved value yet (OPEN-033):
+ * -1 means not set, and cp_brake reports an invalid configuration instead of running.
+ *
+ * @unit s
+ * @min -1
+ * @max 5
+ * @decimal 4
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_SYNC_OFF, -1.f);
+
+/**
+ * Oldest timesync_status still trusted
+ *
+ * Limit of the time-alignment gate. No approved value yet (OPEN-033): -1 means not set, and
+ * cp_brake reports an invalid configuration instead of running.
+ *
+ * @unit s
+ * @min -1
+ * @max 5
+ * @decimal 2
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_SYNC_AGE, -1.f);

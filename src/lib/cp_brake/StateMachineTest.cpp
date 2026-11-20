@@ -72,6 +72,7 @@ StateInputs healthy()
 	in.sample_age_s = 0.1f;
 	in.sample_age_stop_s = kAgeStop_s;
 	in.heading_valid = true;
+	in.time_sync_good = true;
 	in.px4_state_valid = true;
 	in.takeoff_state = kTakeoffStateFlight;
 	in.limiting = false;
@@ -437,6 +438,126 @@ TEST(StateMachineTest, NoStateOutsideTheSixStatesIsEverProduced)
 			}
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// The time alignment of the map (issue #94, ADR 0019): a map whose alignment is not good is not
+// used, so its sectors are unknown and the caps are 0. That is a reason and a readiness fault, not
+// an immediate safe stop: the unused map does not refresh the sample, so after the sample age
+// limit the ordinary stale rule enters SAFE_STOP.
+
+TEST(StateMachineTest, ABadTimeAlignmentInFlightIsReportedAndIsNotASafeStopOnItsOwn)
+{
+	StateInputs in = healthy();
+	in.time_sync_good = false;
+	in.limiting = true;     // what the module gives for an unused map: every sector unknown, every cap 0
+	in.blocked = true;
+
+	const StateResult out = evaluateState(in);
+
+	EXPECT_STATE(out, kStateBraking);
+	EXPECT_EQ(out.reason_flags, kReasonTimeSync | kReasonBlocked);
+	EXPECT_TRUE(out.constraint_valid);
+	EXPECT_FALSE(out.safe_stop_latched);
+}
+
+TEST(StateMachineTest, ABadTimeAlignmentBeforeFlightIsNotReady)
+{
+	for (const uint8_t takeoff_state : kNotFlightStates) {
+		SCOPED_TRACE(static_cast<int>(takeoff_state));
+		StateInputs in = healthy();
+		in.takeoff_state = takeoff_state;
+		in.time_sync_good = false;
+		const StateResult out = evaluateState(in);
+		EXPECT_STATE(out, kStateNotReady);
+		EXPECT_EQ(out.reason_flags, kReasonTimeSync);
+		EXPECT_FALSE(out.safe_stop_latched);
+	}
+}
+
+TEST(StateMachineTest, ABadTimeAlignmentAddsItsReasonToEveryOtherFault)
+{
+	for (const Fault &fault : kFaults) {
+		SCOPED_TRACE(fault.name);
+		StateInputs in = healthy();
+		fault.apply(in);
+		in.time_sync_good = false;
+		const StateResult out = evaluateState(in);
+		EXPECT_STATE(out, kStateSafeStop);
+		EXPECT_EQ(out.reason_flags, fault.reason | kReasonTimeSync | kReasonAckRequired);
+	}
+}
+
+TEST(StateMachineTest, ABadTimeAlignmentWithAnInvalidPx4StateIsNotReadyAndUnqualified)
+{
+	StateInputs in = healthy();
+	in.px4_state_valid = false;
+	in.time_sync_good = false;
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateNotReady);
+	EXPECT_EQ(out.reason_flags, kReasonTimeSync | kReasonUnqualified);
+}
+
+TEST(StateMachineTest, RegainingAGoodTimeAlignmentReturnsToActiveClearWithoutAnAcknowledgement)
+{
+	StateInputs in = healthy();
+	in.time_sync_good = false;
+	StateResult out = evaluateState(in);
+	in.time_sync_good = true;
+	out = step(in, out);
+	EXPECT_STATE(out, kStateActiveClear);
+	EXPECT_EQ(out.reason_flags, 0U);
+}
+
+TEST(StateMachineTest, AnAcknowledgementDoesNotReleaseASafeStopWhileTheTimeAlignmentIsBad)
+{
+	StateInputs in = healthy();
+	in.has_sample = false;
+	StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateSafeStop);
+
+	in.has_sample = true;
+	in.time_sync_good = false;
+	in.pilot_ack = true;
+	out = step(in, out);
+	EXPECT_STATE(out, kStateSafeStop);
+	EXPECT_TRUE(out.safe_stop_latched);
+	EXPECT_NE(out.reason_flags & kReasonTimeSync, 0U);
+
+	in.time_sync_good = true;
+	in.pilot_ack = true;
+	out = step(in, out);
+	EXPECT_STATE(out, kStateActiveClear);
+	EXPECT_FALSE(out.safe_stop_latched);
+}
+
+TEST(StateMachineTest, TheTimeAlignmentIsStillReportedUnderAnOverride)
+{
+	StateInputs in = healthy();
+	in.time_sync_good = false;
+	in.pilot_override = true;
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateObserverOnly);
+	EXPECT_EQ(out.reason_flags, kReasonTimeSync | kReasonOverride);
+}
+
+TEST(StateMachineTest, DisabledReportsNoTimeAlignmentReason)
+{
+	StateInputs in = healthy();
+	in.enabled = false;
+	in.time_sync_good = false;
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateDisabled);
+	EXPECT_EQ(out.reason_flags, 0U);
+}
+
+TEST(StateMachineTest, TheTimeAlignmentComesOnlyFromItsOwnInput)
+{
+	StateInputs in = healthy();
+	in.input_flags = kReasonTimeSync;   // not an input check result: it is not copied
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateActiveClear);
+	EXPECT_EQ(out.reason_flags, 0U);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -82,6 +82,13 @@ StateResult evaluateState(const StateInputs &in)
 		reasons |= kReasonNoHeading;
 	}
 
+	// a map whose time alignment is not good is not used and gives caps of 0: a reason and a
+	// readiness fault, not a safe stop on its own (the unused map does not refresh the sample, so
+	// the stale rule above takes over after the age limit)
+	if (!in.time_sync_good) {
+		reasons |= kReasonTimeSync;
+	}
+
 	if (!in.px4_state_valid) {
 		reasons |= kReasonUnqualified;
 	}
@@ -100,13 +107,14 @@ StateResult evaluateState(const StateInputs &in)
 	bool latched = in.safe_stop_latched;
 
 	// the only exit: the acknowledgement of this evaluation together with a revalidation of it
-	if (latched && in.pilot_ack && !faulted && in.px4_state_valid) {
+	if (latched && in.pilot_ack && !faulted && in.px4_state_valid && in.time_sync_good) {
 		latched = false;
 	}
 
 	if (in.takeoff_state != kTakeoffStateFlight) {
 		// ADR 0009: nothing is enforced before TAKEOFF_STATE_FLIGHT, so no safe stop and no braking
-		out.state = (latched || faulted || !in.px4_state_valid) ? kStateNotReady : kStateObserverOnly;
+		out.state = (latched || faulted || !in.px4_state_valid || !in.time_sync_good) ? kStateNotReady
+			    : kStateObserverOnly;
 
 	} else if (latched) {
 		out.state = kStateSafeStop;
