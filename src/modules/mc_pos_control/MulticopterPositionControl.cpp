@@ -34,6 +34,7 @@
 #include "MulticopterPositionControl.hpp"
 
 #include <float.h>
+#include <string.h>
 #include <lib/mathlib/mathlib.h>
 #include <lib/matrix/matrix/math.hpp>
 #include <px4_platform_common/events.h>
@@ -665,29 +666,25 @@ void MulticopterPositionControl::Run()
 
 void MulticopterPositionControl::updateCollisionLimiter(const hrt_abstime now, const bool flying)
 {
-	vehicle_status_s vehicle_status;
-
-	if (_vehicle_status_sub.update(&vehicle_status)) {
-		_nav_state = vehicle_status.nav_state;
+	// the work queue of this module has a 2240 byte stack on the boards: no large message on it
+	if (_vehicle_status_sub.update()) {
+		_nav_state = _vehicle_status_sub.get().nav_state;
 	}
 
-	cp_brake_constraints_s constraints;
-
-	if (_cp_brake_constraints_sub.update(&constraints)) {
-		_cp_constraints = constraints;
+	if (_cp_brake_constraints_sub.update(&_cp_constraints)) {
 		_cp_hook_constraint.present = true;
-		_cp_hook_constraint.timestamp_us = constraints.timestamp;
-		_cp_hook_constraint.heading_rad = constraints.heading_rad;
-		_cp_hook_constraint.heading_valid = constraints.heading_valid;
+		_cp_hook_constraint.timestamp_us = _cp_constraints.timestamp;
+		_cp_hook_constraint.heading_rad = _cp_constraints.heading_rad;
+		_cp_hook_constraint.heading_valid = _cp_constraints.heading_valid;
 
 		for (std::size_t sector = 0; sector < cp_brake::kSectorCount; ++sector) {
-			_cp_hook_constraint.caps_m_s[sector] = constraints.caps_m_s[sector];
+			_cp_hook_constraint.caps_m_s[sector] = _cp_constraints.caps_m_s[sector];
 		}
 
-		_cp_hook_constraint.enforcement_active = constraints.enforcement_active;
-		_cp_hook_constraint.valid = constraints.valid;
-		_cp_hook_constraint.state = constraints.state;
-		_cp_hook_constraint.reason_flags = constraints.reason_flags;
+		_cp_hook_constraint.enforcement_active = _cp_constraints.enforcement_active;
+		_cp_hook_constraint.valid = _cp_constraints.valid;
+		_cp_hook_constraint.state = _cp_constraints.state;
+		_cp_hook_constraint.reason_flags = _cp_constraints.reason_flags;
 	}
 
 	// the enforcement scope of the hook: Position and Mission (owner, 2026-11-19)
@@ -723,7 +720,8 @@ void MulticopterPositionControl::publishCollisionLimiterStatus(const hrt_abstime
 		return (age > UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(age);
 	};
 
-	cp_brake_status_s status{};
+	cp_brake_status_s &status = _cp_status;
+	memset(&status, 0, sizeof(status)); // in place: no temporary of this size on the stack
 	status.timestamp = now; // when the hook applied the constraint, so the sample age is sample to enforcement
 	status.source = cp_brake_status_s::SOURCE_HOOK;
 	status.sample_timestamp = _cp_hook_constraint.present ? _cp_constraints.sample_timestamp : 0U;

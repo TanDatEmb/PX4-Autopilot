@@ -60,6 +60,7 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
+#include <uORB/SubscriptionData.hpp>
 #include <uORB/topics/cp_brake_constraints.h>
 #include <uORB/topics/cp_brake_status.h>
 #include <uORB/topics/hover_thrust_estimate.h>
@@ -120,7 +121,7 @@ private:
 	uORB::Subscription _vehicle_constraints_sub{ORB_ID(vehicle_constraints)};
 	uORB::Subscription _vehicle_control_mode_sub{ORB_ID(vehicle_control_mode)};
 	uORB::Subscription _vehicle_land_detected_sub{ORB_ID(vehicle_land_detected)};
-	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::SubscriptionData<vehicle_status_s> _vehicle_status_sub{ORB_ID(vehicle_status)}; ///< a member, not a stack copy: the work queue stack is small
 	uORB::Subscription _cp_brake_constraints_sub{ORB_ID(cp_brake_constraints)};
 
 	hrt_abstime _time_stamp_last_loop{0};		/**< time stamp of last loop iteration */
@@ -154,6 +155,7 @@ private:
 	float _cpb_cstr_age_s{-1.f};
 	uint8_t _nav_state{vehicle_status_s::NAVIGATION_STATE_MANUAL};
 	cp_brake_constraints_s _cp_constraints{};          ///< the latest constraint, for the status
+	cp_brake_status_s _cp_status{};                    ///< the status of the hook, built here and not on the stack
 	cp_brake::HookConstraint _cp_hook_constraint{};    ///< the same, as the hook reads it
 	hrt_abstime _cp_status_time{0};                    ///< when the hook status was last published
 	cp_brake::HookAction _cp_status_action{cp_brake::HookAction::kTransparent};
