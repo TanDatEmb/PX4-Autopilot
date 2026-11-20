@@ -329,3 +329,69 @@ TEST(SetpointLimiterTest, AHalfPlaneAtExactlyNinetyDegreesLeavesTheMotionAlone)
 	EXPECT_EQ(vel[0], 8.f);
 	EXPECT_EQ(vel[1], 0.f);
 }
+
+TEST(SetpointLimiterTest, RemovingTheFeedForwardTowardOneSectorDoesNotBringItBackTowardAnother)
+{
+	// the reproduction of the review: two caps of 1 m/s 95 degrees apart (an obtuse angle), the vehicle at
+	// both caps. Removing the feed-forward toward sector 19 must not leave any toward sector 0.
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 1.f;
+	c.caps_m_s[19] = 1.f;
+	const float state[2] = {1.f, 1.09131f};
+	float vel[2] = {5.f, 5.f};
+	float acc[2] = {2.f, 2.f};
+
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+
+	for (const int sector : {0, 19}) {
+		float u[2];
+		direction(sector, 0.f, u);
+		EXPECT_LE(acc[0] * u[0] + acc[1] * u[1], 1e-3f) << "sector " << sector;
+	}
+}
+
+TEST(SetpointLimiterTest, TheFeedForwardNeverExceedsWhatEachLimitingSectorAllows)
+{
+	// for every sector whose cap cut the velocity setpoint: the feed-forward toward it is at most what is
+	// left after the removal in proportion to how close the vehicle is to the cap
+	Lcg rng{777U};
+	const cp_brake::HookContext context = flightContext();
+
+	for (int trial = 0; trial < 3000; ++trial) {
+		const float heading = (rng.next() - 0.5f) * 14.f;
+		cp_brake::HookConstraint c = openConstraint(heading);
+
+		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
+			const float pick = rng.next();
+			c.caps_m_s[i] = (pick < 0.25f) ? 0.f : ((pick < 0.5f) ? rng.next() * 12.f : 12.f);
+		}
+
+		const float speed = rng.next() * 12.f;
+		const float angle = rng.next() * 2.f * kPi;
+		const float in[2] = {speed * cosf(angle), speed * sinf(angle)};
+		const float acc_in[2] = {(rng.next() - 0.5f) * 8.f, (rng.next() - 0.5f) * 8.f};
+		const float state[2] = {(rng.next() - 0.5f) * 12.f, (rng.next() - 0.5f) * 12.f};
+		float vel[2] = {in[0], in[1]};
+		float acc[2] = {acc_in[0], acc_in[1]};
+		cp_brake::limitHorizontalSetpoint(context, c, state, vel, acc);
+		SCOPED_TRACE(::testing::Message() << "trial " << trial);
+		ASSERT_TRUE(std::isfinite(acc[0]) && std::isfinite(acc[1]));
+
+		for (int sector = 0; sector < static_cast<int>(cp_brake::kSectorCount); ++sector) {
+			float u[2];
+			direction(sector, heading, u);
+			const float cap = c.caps_m_s[sector];
+
+			if (cap >= speed || in[0] * u[0] + in[1] * u[1] - cap <= 1e-4f) {
+				continue; // this cap did not cut the velocity setpoint
+			}
+
+			const float toward_in = acc_in[0] * u[0] + acc_in[1] * u[1];
+			const float speed_toward = state[0] * u[0] + state[1] * u[1];
+			const float closeness = (cap <= 0.f) ? 1.f : ((speed_toward <= 0.f) ? 0.f : ((speed_toward >= cap) ? 1.f : speed_toward / cap));
+			const float allowed = (toward_in > 0.f) ? (1.f - closeness) * toward_in : 0.f;
+			EXPECT_LE(acc[0] * u[0] + acc[1] * u[1], allowed + 2e-3f) << "sector " << sector;
+		}
+	}
+}

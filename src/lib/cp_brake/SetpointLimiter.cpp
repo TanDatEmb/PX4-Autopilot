@@ -66,6 +66,9 @@ namespace
 // the motion (cap 0, product of the order of 1e-16) from counting as violated.
 constexpr float kToleranceM_s{1e-4f};
 
+// numerical tolerance of the same kind for the acceleration [m/s^2]
+constexpr float kToleranceM_s2{1e-4f};
+
 // Each projection removes the largest violation. Two sectors with nearly opposite directions can make
 // the sequence converge slowly; then the output is zero.
 constexpr int kMaxPasses{8};
@@ -275,44 +278,84 @@ HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstra
 		return result;
 	}
 
-	// The feed-forward toward a sector whose cap cut the velocity setpoint is removed in proportion to
-	// how close the vehicle already is to that cap (1 at the cap or above it, or when the cap is 0 or the
-	// vehicle velocity is not a number, 0 at rest or moving away): the trajectory cannot push the vehicle
-	// through the cap, and the removal has no step.
+	// The feed-forward toward a sector whose cap cut the velocity setpoint is limited to what is left after
+	// removing it in proportion to how close the vehicle already is to that cap: all of it at the cap or
+	// above it (or when the cap is 0 or the vehicle velocity is not a number), none at rest or moving away,
+	// so the trajectory cannot push the vehicle through a cap and the removal has no step. Each such
+	// sector is a half-plane on the acceleration, a . u_i <= allowed_i with allowed_i >= 0, and they are
+	// projected the same way as the velocity until every one holds, because removing the acceleration
+	// toward one sector can bring it back toward another. Zero satisfies all of them, and is the answer
+	// if the passes run out.
+	const float acc_in[2] = {acc_sp_ned_m_s2[0], acc_sp_ned_m_s2[1]};
 	const bool state_known = std::isfinite(vel_state_ned_m_s[0]) && std::isfinite(vel_state_ned_m_s[1]);
+	float acc[2] = {acc_in[0], acc_in[1]};
+	bool acc_converged = false;
 
-	for (std::size_t sector = 0; sector < kSectorCount; ++sector) {
-		const float cap = usableCap(constraint.caps_m_s[sector]);
+	for (int pass = 0; pass <= kMaxPasses; ++pass) {
+		std::size_t worst = kSectorCount;
+		float worst_excess = kToleranceM_s2;
+		float worst_north = 0.f;
+		float worst_east = 0.f;
 
-		if (cap >= speed_in) {
-			continue;
+		for (std::size_t sector = 0; sector < kSectorCount; ++sector) {
+			const float cap = usableCap(constraint.caps_m_s[sector]);
+
+			if (cap >= speed_in) {
+				continue;
+			}
+
+			float north;
+			float east;
+			sectorDirection(sector, ch, sh, north, east);
+
+			if (vel_in[0] * north + vel_in[1] * east - cap <= kToleranceM_s) {
+				continue; // this cap did not limit the setpoint
+			}
+
+			float allowed = 0.f;
+			const float toward_in = acc_in[0] * north + acc_in[1] * east;
+
+			if (toward_in > 0.f) {
+				float closeness = 1.f;
+
+				if (state_known && cap > 0.f) {
+					const float speed_toward = vel_state_ned_m_s[0] * north + vel_state_ned_m_s[1] * east;
+					closeness = (speed_toward <= 0.f) ? 0.f : ((speed_toward >= cap) ? 1.f : speed_toward / cap);
+				}
+
+				allowed = (1.f - closeness) * toward_in;
+			}
+
+			const float excess = acc[0] * north + acc[1] * east - allowed;
+
+			if (excess > worst_excess) {
+				worst = sector;
+				worst_excess = excess;
+				worst_north = north;
+				worst_east = east;
+			}
 		}
 
-		float north;
-		float east;
-		sectorDirection(sector, ch, sh, north, east);
-
-		if (vel_in[0] * north + vel_in[1] * east - cap <= kToleranceM_s) {
-			continue; // this cap did not limit the setpoint
+		if (worst == kSectorCount) {
+			acc_converged = true;
+			break;
 		}
 
-		const float toward = acc_sp_ned_m_s2[0] * north + acc_sp_ned_m_s2[1] * east;
-
-		if (!(toward > 0.f)) {
-			continue; // nothing accelerates toward the sector
+		if (pass == kMaxPasses) {
+			break;
 		}
 
-		float closeness = 1.f;
-
-		if (state_known && cap > 0.f) {
-			const float speed_toward = vel_state_ned_m_s[0] * north + vel_state_ned_m_s[1] * east;
-			closeness = (speed_toward <= 0.f) ? 0.f : ((speed_toward >= cap) ? 1.f : speed_toward / cap);
-		}
-
-		acc_sp_ned_m_s2[0] -= closeness * toward * north;
-		acc_sp_ned_m_s2[1] -= closeness * toward * east;
+		acc[0] -= worst_excess * worst_north;
+		acc[1] -= worst_excess * worst_east;
 	}
 
+	if (!acc_converged) {
+		acc[0] = 0.f;
+		acc[1] = 0.f;
+	}
+
+	acc_sp_ned_m_s2[0] = acc[0];
+	acc_sp_ned_m_s2[1] = acc[1];
 	return result;
 }
 
