@@ -625,11 +625,29 @@ public:
 
 TEST_F(CollisionLimiterTest, AControllerThatWasNeverGivenAHookIsTransparent)
 {
+	// no call of setCollisionLimiter() at all: the default is a disabled hook, the unchanged controller
 	setVelocity(8.f, 2.f);
 	setFeedForward(1.f, 0.5f);
-	run();
+
+	for (PositionControl *control : {&_position_control, &_baseline}) {
+		control->setState(_states);
+		control->setInputSetpoint(_input);
+		EXPECT_TRUE(control->update(DT));
+	}
+
 	EXPECT_EQ(record().result.action, cp_brake::HookAction::kTransparent);
-	expectSameAsBaseline();
+	EXPECT_EQ(record().result.reason_flags, 0U);
+
+	vehicle_local_position_setpoint_s hooked{};
+	vehicle_local_position_setpoint_s plain{};
+	_position_control.getLocalPositionSetpoint(hooked);
+	_baseline.getLocalPositionSetpoint(plain);
+	EXPECT_TRUE(sameBits(hooked.vx, plain.vx));
+	EXPECT_TRUE(sameBits(hooked.vy, plain.vy));
+	EXPECT_TRUE(sameBits(hooked.acceleration[0], plain.acceleration[0]));
+	EXPECT_TRUE(sameBits(hooked.acceleration[1], plain.acceleration[1]));
+	EXPECT_FLOAT_EQ(hooked.vx, 8.f);
+	EXPECT_FLOAT_EQ(hooked.vy, 2.f);
 }
 
 TEST_F(CollisionLimiterTest, CpbEnOffIsBitIdenticalToTheBaselineWhateverTheConstraintSays)
