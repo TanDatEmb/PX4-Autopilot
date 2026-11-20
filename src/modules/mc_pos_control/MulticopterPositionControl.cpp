@@ -596,8 +596,10 @@ void MulticopterPositionControl::Run()
 
 			const hrt_abstime now = hrt_absolute_time();
 
-			// the limiter hook (cp_brake) sits inside update(); every call below sees the same inputs
-			updateCollisionLimiter(now, flying);
+			// The limiter hook (cp_brake) sits inside update(); every call below sees the same inputs. It is
+			// not eligible while the ground contact suppression above clears the setpoints and the
+			// integrators: a safe stop there would put horizontal velocity feedback back during touchdown.
+			updateCollisionLimiter(flying && !flying_but_ground_contact);
 
 			// Run position control
 			if (_control.update(dt)) {
@@ -626,7 +628,7 @@ void MulticopterPositionControl::Run()
 				}
 			}
 
-			publishCollisionLimiterStatus(now);
+			publishCollisionLimiterStatus();
 
 			// Publish internal position control setpoints
 			// on top of the input/feed-forward setpoints these containt the PID corrections
@@ -664,7 +666,7 @@ void MulticopterPositionControl::Run()
 	perf_end(_cycle_perf);
 }
 
-void MulticopterPositionControl::updateCollisionLimiter(const hrt_abstime now, const bool flying)
+void MulticopterPositionControl::updateCollisionLimiter(const bool flying)
 {
 	// the work queue of this module has a 2240 byte stack on the boards: no large message on it
 	if (_vehicle_status_sub.update()) {
@@ -687,16 +689,21 @@ void MulticopterPositionControl::updateCollisionLimiter(const hrt_abstime now, c
 		_cp_hook_constraint.reason_flags = _cp_constraints.reason_flags;
 	}
 
+	// The time at which the hook applies the constraint is taken after the constraint was copied, so a
+	// constraint that cp_brake published meanwhile (it runs on another work queue) is never newer than it.
+	_cp_hook_applied_time = hrt_absolute_time();
+
 	// the enforcement scope of the hook: Position and Mission (owner, 2026-11-19)
 	const bool nav_state_enforced = (_nav_state == vehicle_status_s::NAVIGATION_STATE_POSCTL)
 					|| (_nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION);
 
-	const cp_brake::HookContext context{_cpb_en == 1, flying, nav_state_enforced, now, _cpb_cstr_age_s};
+	const cp_brake::HookContext context{_cpb_en == 1, flying, nav_state_enforced, _cp_hook_applied_time, _cpb_cstr_age_s};
 	_control.setCollisionLimiter(context, _cp_hook_constraint);
 }
 
-void MulticopterPositionControl::publishCollisionLimiterStatus(const hrt_abstime now)
+void MulticopterPositionControl::publishCollisionLimiterStatus()
 {
+	const hrt_abstime now = _cp_hook_applied_time; // the time the hook applied the constraint, not the cycle's
 	const CollisionLimiterRecord &record = _control.collisionLimiterRecord();
 
 	// nothing to say while the hook is off or the vehicle is not in flight

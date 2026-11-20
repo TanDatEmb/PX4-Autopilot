@@ -97,10 +97,10 @@ private:
 	void Run() override;
 
 	/** Give the limiter hook (cp_brake) its inputs for this cycle: parameters, flight phase, navigation state, constraint. */
-	void updateCollisionLimiter(const hrt_abstime now, const bool flying);
+	void updateCollisionLimiter(const bool flying);
 
 	/** Publish what the hook did, at the time it applied the constraint (cp_brake_hook). */
-	void publishCollisionLimiterStatus(const hrt_abstime now);
+	void publishCollisionLimiterStatus();
 
 	TakeoffHandling _takeoff; /**< state machine and ramp to bring the vehicle off the ground without jumps */
 
@@ -156,6 +156,7 @@ private:
 	cp_brake_constraints_s _cp_constraints{};          ///< the latest constraint, for the status
 	cp_brake_hook_s _cp_hook_message{};                ///< what the hook did, built here and not on the stack
 	cp_brake::HookConstraint _cp_hook_constraint{};    ///< the same, as the hook reads it
+	hrt_abstime _cp_hook_applied_time{0};              ///< the time the hook applied the constraint in this cycle
 	hrt_abstime _cp_hook_time{0};                    ///< when the hook status was last published
 	cp_brake::HookAction _cp_hook_action{cp_brake::HookAction::kTransparent};
 	uint32_t _cp_hook_reasons{0U};
