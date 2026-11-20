@@ -386,7 +386,7 @@ TEST(SetpointLimiterTest, TheFeedForwardNeverExceedsWhatEachLimitingSectorAllows
 			const bool cut_the_input = in[0] * u[0] + in[1] * u[1] - cap > 1e-4f;
 			const bool output_at_cap = vel[0] * u[0] + vel[1] * u[1] - cap >= -1e-4f;
 
-			if (cap >= speed || !(cut_the_input || output_at_cap)) {
+			if (cap > speed + 1e-4f || !(cut_the_input || output_at_cap)) {
 				continue; // this cap neither cut the velocity setpoint nor holds the output
 			}
 
@@ -417,4 +417,51 @@ TEST(SetpointLimiterTest, ASectorThatTheVelocityProjectionPushesToItsCapBoundsTh
 	direction(19, 0.f, u);
 	EXPECT_LE(vel[0] * u[0] + vel[1] * u[1], 1.f + 1e-3f);
 	EXPECT_LE(acc[0] * u[0] + acc[1] * u[1], 1e-3f);
+}
+
+TEST(SetpointLimiterTest, TheFeedForwardIsBoundWhenTheVelocityNeedsNoProjection)
+{
+	// the third reproduction of the review: the setpoint and the vehicle are exactly at the cap of sector 0
+	// (1 m/s), the velocity needs no change, and the feed-forward still pushes toward it
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 1.f;
+	const float state[2] = {1.f, 0.5f};
+	float vel[2] = {1.f, 0.5f};
+	float acc[2] = {2.f, 0.f};
+
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited); // only the acceleration changed, and it has to be written back
+	EXPECT_EQ(vel[0], 1.f);
+	EXPECT_EQ(vel[1], 0.5f);
+	EXPECT_LE(acc[0], 1e-3f);
+	EXPECT_NEAR(acc[1], 0.f, 1e-3f);
+}
+
+TEST(SetpointLimiterTest, AZeroVelocityCommandAgainstACapOfZeroStillRemovesTheFeedForwardTowardIt)
+{
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 0.f;
+	const float state[2] = {0.f, 0.f};
+	float vel[2] = {0.f, 0.f};
+	float acc[2] = {2.f, 1.f};
+
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+	EXPECT_LE(acc[0], 1e-3f);
+	EXPECT_NEAR(acc[1], 1.f, 1e-3f); // along the obstacle: untouched
+}
+
+TEST(SetpointLimiterTest, ASetpointWellInsideEveryCapChangesNothingAndIsClear)
+{
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[0] = 5.f;
+	const float state[2] = {0.5f, 0.f};
+	float vel[2] = {1.f, 0.5f};
+	float acc[2] = {2.f, 1.f};
+
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(flightContext(), c, state, vel, acc);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kClear);
+	EXPECT_EQ(vel[0], 1.f);
+	EXPECT_EQ(acc[0], 2.f);
+	EXPECT_EQ(acc[1], 1.f);
 }

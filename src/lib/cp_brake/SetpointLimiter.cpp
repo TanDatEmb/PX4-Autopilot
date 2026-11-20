@@ -142,6 +142,103 @@ bool constraintIsStale(const HookContext &context, const HookConstraint &constra
 	return (context.now_us - constraint.timestamp_us) >= secondsToMicroseconds(context.constraint_age_limit_s);
 }
 
+// The feed-forward toward a sector whose cap cut the velocity setpoint, or holds it (also when the
+// velocity needed no projection at all), is limited to what is left after removing it in proportion to how
+// close the vehicle already is to that cap: all of it at the cap or above it (or when the cap is 0 or the
+// vehicle velocity is not a number), none at rest or moving away, so the trajectory cannot push the
+// vehicle through a cap and the removal has no step. Each such sector is a half-plane on the
+// acceleration, a . u_i <= allowed_i with allowed_i >= 0, and they are projected the same way as the
+// velocity until every one holds, because removing the acceleration toward one sector can bring it back
+// toward another. Zero satisfies all of them, and is the answer if the passes run out. Returns true when
+// the acceleration changed.
+bool limitFeedForward(const HookConstraint &constraint, const float ch, const float sh, const float vel_in[2],
+		      const float vel_out[2], const float vel_state[2], float acc_sp[2])
+{
+	const float acc_in[2] = {acc_sp[0], acc_sp[1]};
+	const float speed_in = sqrtf(vel_in[0] * vel_in[0] + vel_in[1] * vel_in[1]);
+	const bool state_known = std::isfinite(vel_state[0]) && std::isfinite(vel_state[1]);
+	float acc[2] = {acc_in[0], acc_in[1]};
+	bool changed = false;
+	bool converged = false;
+
+	for (int pass = 0; pass <= kMaxPasses; ++pass) {
+		std::size_t worst = kSectorCount;
+		float worst_excess = kToleranceM_s2;
+		float worst_north = 0.f;
+		float worst_east = 0.f;
+
+		for (std::size_t sector = 0; sector < kSectorCount; ++sector) {
+			const float cap = usableCap(constraint.caps_m_s[sector]);
+
+			if (cap > speed_in + kToleranceM_s) {
+				continue; // a cap above the speed cannot be at or cut by the setpoint
+			}
+
+			float north;
+			float east;
+			sectorDirection(sector, ch, sh, north, east);
+
+			// a sector bounds the feed-forward when its cap cut the velocity setpoint, or when the velocity
+			// setpoint leaves the hook at its cap (the projection onto another sector can push it there)
+			const bool cut_the_input = (vel_in[0] * north + vel_in[1] * east - cap) > kToleranceM_s;
+			const bool output_at_cap = (vel_out[0] * north + vel_out[1] * east - cap) >= -kToleranceM_s;
+
+			if (!cut_the_input && !output_at_cap) {
+				continue;
+			}
+
+			float allowed = 0.f;
+			const float toward_in = acc_in[0] * north + acc_in[1] * east;
+
+			if (toward_in > 0.f) {
+				float closeness = 1.f;
+
+				if (state_known && cap > 0.f) {
+					const float speed_toward = vel_state[0] * north + vel_state[1] * east;
+					closeness = (speed_toward <= 0.f) ? 0.f : ((speed_toward >= cap) ? 1.f : speed_toward / cap);
+				}
+
+				allowed = (1.f - closeness) * toward_in;
+			}
+
+			const float excess = acc[0] * north + acc[1] * east - allowed;
+
+			if (excess > worst_excess) {
+				worst = sector;
+				worst_excess = excess;
+				worst_north = north;
+				worst_east = east;
+			}
+		}
+
+		if (worst == kSectorCount) {
+			converged = true;
+			break;
+		}
+
+		if (pass == kMaxPasses) {
+			break;
+		}
+
+		acc[0] -= worst_excess * worst_north;
+		acc[1] -= worst_excess * worst_east;
+		changed = true;
+	}
+
+	if (!converged) {
+		acc[0] = 0.f;
+		acc[1] = 0.f;
+		changed = true;
+	}
+
+	if (changed) {
+		acc_sp[0] = acc[0];
+		acc_sp[1] = acc[1];
+	}
+
+	return changed;
+}
+
 HookResult safeStop(const uint32_t reason_flags, float vel_sp[2], float acc_sp[2])
 {
 	vel_sp[0] = 0.f;
@@ -259,108 +356,32 @@ HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstra
 		vel[1] = 0.f;
 	}
 
-	if (!limited && converged) {
-		return result;
+	// the velocity setpoint changes only if a projection ran or it had to be zeroed
+	const bool velocity_changed = limited || !converged;
+
+	if (velocity_changed) {
+		vel_sp_ned_m_s[0] = vel[0];
+		vel_sp_ned_m_s[1] = vel[1];
 	}
 
-	result.action = HookAction::kLimited;
-	vel_sp_ned_m_s[0] = vel[0];
-	vel_sp_ned_m_s[1] = vel[1];
+	// no feed-forward means nothing to limit, and NaN stays NaN
+	bool acc_changed = false;
 
-	// no feed-forward means nothing to remove, and NaN stays NaN
-	if (!std::isfinite(acc_sp_ned_m_s2[0]) || !std::isfinite(acc_sp_ned_m_s2[1])) {
-		return result;
-	}
+	if (std::isfinite(acc_sp_ned_m_s2[0]) && std::isfinite(acc_sp_ned_m_s2[1])) {
+		if (!converged) {
+			acc_sp_ned_m_s2[0] = 0.f;
+			acc_sp_ned_m_s2[1] = 0.f;
+			acc_changed = true;
 
-	if (!converged) {
-		acc_sp_ned_m_s2[0] = 0.f;
-		acc_sp_ned_m_s2[1] = 0.f;
-		return result;
-	}
-
-	// The feed-forward toward a sector whose cap cut the velocity setpoint, or holds it, is limited to what is left after
-	// removing it in proportion to how close the vehicle already is to that cap: all of it at the cap or
-	// above it (or when the cap is 0 or the vehicle velocity is not a number), none at rest or moving away,
-	// so the trajectory cannot push the vehicle through a cap and the removal has no step. Each such
-	// sector is a half-plane on the acceleration, a . u_i <= allowed_i with allowed_i >= 0, and they are
-	// projected the same way as the velocity until every one holds, because removing the acceleration
-	// toward one sector can bring it back toward another. Zero satisfies all of them, and is the answer
-	// if the passes run out.
-	const float acc_in[2] = {acc_sp_ned_m_s2[0], acc_sp_ned_m_s2[1]};
-	const bool state_known = std::isfinite(vel_state_ned_m_s[0]) && std::isfinite(vel_state_ned_m_s[1]);
-	float acc[2] = {acc_in[0], acc_in[1]};
-	bool acc_converged = false;
-
-	for (int pass = 0; pass <= kMaxPasses; ++pass) {
-		std::size_t worst = kSectorCount;
-		float worst_excess = kToleranceM_s2;
-		float worst_north = 0.f;
-		float worst_east = 0.f;
-
-		for (std::size_t sector = 0; sector < kSectorCount; ++sector) {
-			const float cap = usableCap(constraint.caps_m_s[sector]);
-
-			if (cap >= speed_in) {
-				continue;
-			}
-
-			float north;
-			float east;
-			sectorDirection(sector, ch, sh, north, east);
-
-			// a sector bounds the feed-forward when its cap cut the velocity setpoint, or when the velocity
-			// setpoint leaves the hook at its cap (the projection onto another sector can push it there)
-			const bool cut_the_input = (vel_in[0] * north + vel_in[1] * east - cap) > kToleranceM_s;
-			const bool output_at_cap = (vel[0] * north + vel[1] * east - cap) >= -kToleranceM_s;
-
-			if (!cut_the_input && !output_at_cap) {
-				continue;
-			}
-
-			float allowed = 0.f;
-			const float toward_in = acc_in[0] * north + acc_in[1] * east;
-
-			if (toward_in > 0.f) {
-				float closeness = 1.f;
-
-				if (state_known && cap > 0.f) {
-					const float speed_toward = vel_state_ned_m_s[0] * north + vel_state_ned_m_s[1] * east;
-					closeness = (speed_toward <= 0.f) ? 0.f : ((speed_toward >= cap) ? 1.f : speed_toward / cap);
-				}
-
-				allowed = (1.f - closeness) * toward_in;
-			}
-
-			const float excess = acc[0] * north + acc[1] * east - allowed;
-
-			if (excess > worst_excess) {
-				worst = sector;
-				worst_excess = excess;
-				worst_north = north;
-				worst_east = east;
-			}
+		} else {
+			acc_changed = limitFeedForward(constraint, ch, sh, vel_in, vel, vel_state_ned_m_s, acc_sp_ned_m_s2);
 		}
-
-		if (worst == kSectorCount) {
-			acc_converged = true;
-			break;
-		}
-
-		if (pass == kMaxPasses) {
-			break;
-		}
-
-		acc[0] -= worst_excess * worst_north;
-		acc[1] -= worst_excess * worst_east;
 	}
 
-	if (!acc_converged) {
-		acc[0] = 0.f;
-		acc[1] = 0.f;
+	if (velocity_changed || acc_changed) {
+		result.action = HookAction::kLimited;
 	}
 
-	acc_sp_ned_m_s2[0] = acc[0];
-	acc_sp_ned_m_s2[1] = acc[1];
 	return result;
 }
 
