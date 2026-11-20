@@ -36,3 +36,21 @@ uint8 heading_history_size	# heading samples in the history
 uint32 heading_sample_count	# heading samples accepted into the history
 uint32 heading_rejected_count	# heading samples the history refused (no time, or a time that did not advance)
 uint32 time_sync_rejected_count	# maps not used because their time alignment was not good
+
+uint8 source			# who published this message, SOURCE_*; the fields below SOURCE_HOOK only are 0 in a SOURCE_MODULE message
+uint8 SOURCE_MODULE = 0		# cp_brake, at its own evaluation
+uint8 SOURCE_HOOK = 1		# the limiter hook in mc_pos_control: timestamp is the time it applied the constraint, so sample_age_us is sample to enforcement (ICD-CP-04)
+
+uint8 hook_action		# what the hook did, HOOK_ACTION_*; reason_flags then holds the reasons of the hook
+uint8 HOOK_ACTION_TRANSPARENT = 0	# CPB_EN off, before flight, or a navigation state other than Position or Mission (reason NAV_STATE)
+uint8 HOOK_ACTION_NO_ACTION = 1		# the constraint says no action (observer-only, or an unqualified PX4 state)
+uint8 HOOK_ACTION_CLEAR = 2		# the limiter ran and no setpoint exceeded a cap
+uint8 HOOK_ACTION_LIMITED = 3		# the limiter reduced the velocity setpoint and/or the feed-forward
+uint8 HOOK_ACTION_SAFE_STOP = 4		# zero horizontal velocity and feed-forward cleared
+
+uint8 active_sector		# sector whose cap cut the velocity setpoint most, 255 for none
+float32[2] vel_sp_in		# [m/s] horizontal velocity setpoint entering the hook, local NED (north, east)
+float32[2] vel_sp_out		# [m/s] horizontal velocity setpoint leaving the hook
+float32[2] acc_sp_in		# [m/s^2] horizontal feed-forward acceleration entering the hook, NaN when unset
+float32[2] acc_sp_out		# [m/s^2] horizontal feed-forward acceleration leaving the hook
+float32[2] vel			# [m/s] horizontal velocity of the vehicle as the hook saw it, local NED

@@ -41,12 +41,22 @@
 
 using namespace matrix;
 
+// the hook's enumerations equal the constants of the status message
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kTransparent) == cp_brake_status_s::HOOK_ACTION_TRANSPARENT, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kNoAction) == cp_brake_status_s::HOOK_ACTION_NO_ACTION, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kClear) == cp_brake_status_s::HOOK_ACTION_CLEAR, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kLimited) == cp_brake_status_s::HOOK_ACTION_LIMITED, "hook action");
+static_assert(static_cast<uint8_t>(cp_brake::HookAction::kSafeStop) == cp_brake_status_s::HOOK_ACTION_SAFE_STOP, "hook action");
+static_assert(cp_brake::kSectorCount == 72, "sector count of cp_brake_constraints");
+
 MulticopterPositionControl::MulticopterPositionControl(bool vtol) :
 	ModuleParams(nullptr),
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::nav_and_controllers),
 	_vehicle_attitude_setpoint_pub(vtol ? ORB_ID(mc_virtual_attitude_setpoint) : ORB_ID(vehicle_attitude_setpoint))
 {
 	_sample_interval_s.update(0.01f); // 100 Hz default
+	_param_cpb_en_handle = param_find("CPB_EN");
+	_param_cpb_cstr_age_handle = param_find("CPB_CSTR_AGE");
 	parameters_update(true);
 	_tilt_limit_slew_rate.setSlewRate(.2f);
 	_takeoff_status_pub.advertise();
@@ -80,6 +90,21 @@ void MulticopterPositionControl::parameters_update(bool force)
 
 		// update parameters from storage
 		ModuleParams::updateParams();
+
+		// collision prevention limiter hook: no such parameter means a disabled hook with no age limit
+		int32_t cpb_en = 0;
+		float cpb_cstr_age_s = -1.f;
+
+		if (_param_cpb_en_handle == PARAM_INVALID || param_get(_param_cpb_en_handle, &cpb_en) != 0) {
+			cpb_en = 0;
+		}
+
+		if (_param_cpb_cstr_age_handle == PARAM_INVALID || param_get(_param_cpb_cstr_age_handle, &cpb_cstr_age_s) != 0) {
+			cpb_cstr_age_s = -1.f;
+		}
+
+		_cpb_en = cpb_en;
+		_cpb_cstr_age_s = cpb_cstr_age_s;
 
 		float sample_freq_hz = 1.f / _sample_interval_s.mean();
 
@@ -570,6 +595,9 @@ void MulticopterPositionControl::Run()
 
 			const hrt_abstime now = hrt_absolute_time();
 
+			// the limiter hook (cp_brake) sits inside update(); every call below sees the same inputs
+			updateCollisionLimiter(now, flying);
+
 			// Run position control
 			if (_control.update(dt)) {
 
@@ -596,6 +624,8 @@ void MulticopterPositionControl::Run()
 					_control.update(dt);
 				}
 			}
+
+			publishCollisionLimiterStatus(now);
 
 			// Publish internal position control setpoints
 			// on top of the input/feed-forward setpoints these containt the PID corrections
@@ -631,6 +661,89 @@ void MulticopterPositionControl::Run()
 	}
 
 	perf_end(_cycle_perf);
+}
+
+void MulticopterPositionControl::updateCollisionLimiter(const hrt_abstime now, const bool flying)
+{
+	vehicle_status_s vehicle_status;
+
+	if (_vehicle_status_sub.update(&vehicle_status)) {
+		_nav_state = vehicle_status.nav_state;
+	}
+
+	cp_brake_constraints_s constraints;
+
+	if (_cp_brake_constraints_sub.update(&constraints)) {
+		_cp_constraints = constraints;
+		_cp_hook_constraint.present = true;
+		_cp_hook_constraint.timestamp_us = constraints.timestamp;
+		_cp_hook_constraint.heading_rad = constraints.heading_rad;
+		_cp_hook_constraint.heading_valid = constraints.heading_valid;
+
+		for (std::size_t sector = 0; sector < cp_brake::kSectorCount; ++sector) {
+			_cp_hook_constraint.caps_m_s[sector] = constraints.caps_m_s[sector];
+		}
+
+		_cp_hook_constraint.enforcement_active = constraints.enforcement_active;
+		_cp_hook_constraint.valid = constraints.valid;
+		_cp_hook_constraint.state = constraints.state;
+		_cp_hook_constraint.reason_flags = constraints.reason_flags;
+	}
+
+	// the enforcement scope of the hook: Position and Mission (owner, 2026-11-19)
+	const bool nav_state_enforced = (_nav_state == vehicle_status_s::NAVIGATION_STATE_POSCTL)
+					|| (_nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION);
+
+	const cp_brake::HookContext context{_cpb_en == 1, flying, nav_state_enforced, now, _cpb_cstr_age_s};
+	_control.setCollisionLimiter(context, _cp_hook_constraint);
+}
+
+void MulticopterPositionControl::publishCollisionLimiterStatus(const hrt_abstime now)
+{
+	const CollisionLimiterRecord &record = _control.collisionLimiterRecord();
+
+	// nothing to say while the hook is off or the vehicle is not in flight
+	if (record.result.action == cp_brake::HookAction::kTransparent && record.result.reason_flags == 0U) {
+		return;
+	}
+
+	// 10 Hz and every change of what the hook did or why (ICD-CP-05)
+	const bool changed = (record.result.action != _cp_status_action) || (record.result.reason_flags != _cp_status_reasons);
+
+	if (!changed && (now - _cp_status_time) < 100_ms) {
+		return;
+	}
+
+	_cp_status_time = now;
+	_cp_status_action = record.result.action;
+	_cp_status_reasons = record.result.reason_flags;
+
+	const auto age_us = [now](const uint64_t timestamp) -> uint32_t {
+		const uint64_t age = (timestamp != 0U && now > timestamp) ? (now - timestamp) : 0U;
+		return (age > UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(age);
+	};
+
+	cp_brake_status_s status{};
+	status.timestamp = now; // when the hook applied the constraint, so the sample age is sample to enforcement
+	status.source = cp_brake_status_s::SOURCE_HOOK;
+	status.sample_timestamp = _cp_hook_constraint.present ? _cp_constraints.sample_timestamp : 0U;
+	status.constraint_timestamp = _cp_hook_constraint.present ? _cp_constraints.timestamp : 0U;
+	status.sample_age_us = age_us(status.sample_timestamp);
+	status.constraint_age_us = age_us(status.constraint_timestamp);
+	status.state = _cp_hook_constraint.present ? _cp_constraints.state : cp_brake_constraints_s::STATE_DISABLED;
+	status.reason_flags = record.result.reason_flags;
+	status.hook_action = static_cast<uint8_t>(record.result.action);
+	status.active_sector = record.result.active_sector;
+
+	for (int axis = 0; axis < 2; ++axis) {
+		status.vel_sp_in[axis] = record.vel_sp_in_m_s[axis];
+		status.vel_sp_out[axis] = record.vel_sp_out_m_s[axis];
+		status.acc_sp_in[axis] = record.acc_sp_in_m_s2[axis];
+		status.acc_sp_out[axis] = record.acc_sp_out_m_s2[axis];
+		status.vel[axis] = record.vel_m_s[axis];
+	}
+
+	_cp_brake_status_pub.publish(status);
 }
 
 trajectory_setpoint_s MulticopterPositionControl::generateFailsafeSetpoint(const hrt_abstime &now,

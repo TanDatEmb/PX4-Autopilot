@@ -39,8 +39,9 @@
  * the configuration and the input, applies the stopping model and the dwell and rise limiter, runs
  * the state machine of lib/cp_brake/StateMachine.hpp, and publishes cp_brake_constraints and
  * cp_brake_status. The evaluation runs on a fixed interval as well as on every input, so a stopped
- * input is noticed by its age. The caps are not enforced yet: enforcement_active stays false until
- * the limiter hook exists. The heading of the sample time comes from a timestamped history of
+ * input is noticed by its age. The caps are applied by the limiter hook in mc_pos_control
+ * (lib/cp_brake/SetpointLimiter.hpp), which acts only where enforcement_active is set (the states
+ * ACTIVE_CLEAR, BRAKING and SAFE_STOP). The heading of the sample time comes from a timestamped history of
  * vehicle_local_position.heading (lib/cp_brake/HeadingHistory.hpp, ADR 0019), and a map whose time
  * alignment fails the gate on timesync_status is not used (lib/cp_brake/TimeSync.hpp). The module
  * only publishes those two topics; it never requests a mode (ADR 0007).

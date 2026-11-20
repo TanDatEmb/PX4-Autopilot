@@ -35,8 +35,8 @@
  * Collision prevention brake enable
  *
  * Starts the cp_brake module at boot (reboot to apply). The module publishes the per-sector speed
- * caps; the limiter hook that applies them is separate. Do not enable together with the stock
- * collision prevention (CP_DIST > 0).
+ * caps; the limiter hook in mc_pos_control applies them, in flight in Position and Mission, and reads
+ * this parameter too. Do not enable together with the stock collision prevention (CP_DIST > 0).
  *
  * @boolean
  * @group Collision Prevention Brake

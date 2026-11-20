@@ -42,6 +42,7 @@
 #include "GotoControl/GotoControl.hpp"
 
 #include <drivers/drv_hrt.h>
+#include <lib/cp_brake/SetpointLimiter.hpp>
 #include <lib/mathlib/math/filter/AlphaFilter.hpp>
 #include <lib/mathlib/math/filter/NotchFilter.hpp>
 #include <lib/mathlib/math/WelfordMean.hpp>
@@ -55,9 +56,12 @@
 #include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 #include <px4_platform_common/posix.h>
 #include <px4_platform_common/tasks.h>
+#include <parameters/param.h>
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
+#include <uORB/topics/cp_brake_constraints.h>
+#include <uORB/topics/cp_brake_status.h>
 #include <uORB/topics/hover_thrust_estimate.h>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/trajectory_setpoint.h>
@@ -67,6 +71,7 @@
 #include <uORB/topics/vehicle_land_detected.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_local_position_setpoint.h>
+#include <uORB/topics/vehicle_status.h>
 
 using namespace time_literals;
 
@@ -91,6 +96,12 @@ public:
 private:
 	void Run() override;
 
+	/** Give the limiter hook (cp_brake) its inputs for this cycle: parameters, flight phase, navigation state, constraint. */
+	void updateCollisionLimiter(const hrt_abstime now, const bool flying);
+
+	/** Publish what the hook did, at the time it applied the constraint (cp_brake_status, SOURCE_HOOK). */
+	void publishCollisionLimiterStatus(const hrt_abstime now);
+
 	TakeoffHandling _takeoff; /**< state machine and ramp to bring the vehicle off the ground without jumps */
 
 	orb_advert_t _mavlink_log_pub{nullptr};
@@ -98,6 +109,7 @@ private:
 	uORB::PublicationData<takeoff_status_s>              _takeoff_status_pub{ORB_ID(takeoff_status)};
 	uORB::Publication<vehicle_attitude_setpoint_s>	     _vehicle_attitude_setpoint_pub{ORB_ID(vehicle_attitude_setpoint)};
 	uORB::Publication<vehicle_local_position_setpoint_s> _local_pos_sp_pub{ORB_ID(vehicle_local_position_setpoint)};	/**< vehicle local position setpoint publication */
+	uORB::Publication<cp_brake_status_s>                 _cp_brake_status_pub{ORB_ID(cp_brake_status)};	/**< status of the limiter hook, shared with the cp_brake module */
 
 	uORB::SubscriptionCallbackWorkItem _local_pos_sub{this, ORB_ID(vehicle_local_position)};	/**< vehicle local position */
 
@@ -108,6 +120,8 @@ private:
 	uORB::Subscription _vehicle_constraints_sub{ORB_ID(vehicle_constraints)};
 	uORB::Subscription _vehicle_control_mode_sub{ORB_ID(vehicle_control_mode)};
 	uORB::Subscription _vehicle_land_detected_sub{ORB_ID(vehicle_land_detected)};
+	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::Subscription _cp_brake_constraints_sub{ORB_ID(cp_brake_constraints)};
 
 	hrt_abstime _time_stamp_last_loop{0};		/**< time stamp of last loop iteration */
 	hrt_abstime _time_position_control_enabled{0};
@@ -130,6 +144,20 @@ private:
 		.maybe_landed = true,
 		.landed = true,
 	};
+
+	// Collision prevention limiter hook (cp_brake). The parameters are looked up by name, not declared
+	// with DEFINE_PARAMETERS, so this module builds and runs unchanged on a board without cp_brake: no
+	// CPB_EN there means a disabled hook.
+	param_t _param_cpb_en_handle{PARAM_INVALID};
+	param_t _param_cpb_cstr_age_handle{PARAM_INVALID};
+	int32_t _cpb_en{0};
+	float _cpb_cstr_age_s{-1.f};
+	uint8_t _nav_state{vehicle_status_s::NAVIGATION_STATE_MANUAL};
+	cp_brake_constraints_s _cp_constraints{};          ///< the latest constraint, for the status
+	cp_brake::HookConstraint _cp_hook_constraint{};    ///< the same, as the hook reads it
+	hrt_abstime _cp_status_time{0};                    ///< when the hook status was last published
+	cp_brake::HookAction _cp_status_action{cp_brake::HookAction::kTransparent};
+	uint32_t _cp_status_reasons{0U};
 
 	DEFINE_PARAMETERS(
 		// Position Control
