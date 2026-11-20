@@ -35,10 +35,13 @@
  * @file CpBrake.hpp
  *
  * cp_brake: turns the obstacle_distance map of the companion computer into per-sector speed caps
- * (collision-prevention ICD-CP-04). This step validates the configuration and the input, applies
- * the stopping model and the dwell and rise limiter, and publishes cp_brake_constraints and
- * cp_brake_status. The caps are not enforced yet: enforcement_active stays false until the limiter
- * hook exists, and the heading history and the state machine are separate steps.
+ * and the operational state (collision-prevention ICD-CP-04, architecture section 4). It validates
+ * the configuration and the input, applies the stopping model and the dwell and rise limiter, runs
+ * the state machine of lib/cp_brake/StateMachine.hpp, and publishes cp_brake_constraints and
+ * cp_brake_status. The evaluation runs on a fixed interval as well as on every input, so a stopped
+ * input is noticed by its age. The caps are not enforced yet: enforcement_active stays false until
+ * the limiter hook exists, and heading_valid stays false until the heading history exists. The
+ * module only publishes those two topics; it never requests a mode (ADR 0007).
  */
 
 #pragma once
@@ -46,7 +49,7 @@
 #include <px4_platform_common/defines.h>
 #include <px4_platform_common/module.h>
 #include <px4_platform_common/module_params.h>
-#include <px4_platform_common/px4_work_queue/WorkItem.hpp>
+#include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
 
 #include <drivers/drv_hrt.h>
 
@@ -57,12 +60,15 @@
 #include <uORB/topics/cp_brake_status.h>
 #include <uORB/topics/obstacle_distance.h>
 #include <uORB/topics/parameter_update.h>
+#include <uORB/topics/takeoff_status.h>
+#include <uORB/topics/vehicle_local_position.h>
 
 #include "CapLimiter.hpp"
 #include "ConfigCheck.hpp"
+#include "StateMachine.hpp"
 #include "StoppingModel.hpp"
 
-class CpBrake : public ModuleBase<CpBrake>, public ModuleParams, public px4::WorkItem
+class CpBrake : public ModuleBase<CpBrake>, public ModuleParams, public px4::ScheduledWorkItem
 {
 public:
 	CpBrake();
@@ -80,8 +86,8 @@ public:
 	bool init();
 
 	/**
-	 * Stop request that also wakes the work item. Run() is otherwise only scheduled by a new
-	 * obstacle_distance, so without this "cp_brake stop" waits for data that may never come.
+	 * Stop request that also wakes the work item, so "cp_brake stop" does not wait for the next
+	 * evaluation tick or input.
 	 */
 	void request_stop() override
 	{
@@ -92,17 +98,26 @@ public:
 	int print_status() override;
 
 private:
+	/**
+	 * Interval of the periodic evaluation [us]. It bounds how long after the age of the last map
+	 * reaches CPB_AGE_STOP the state machine notices it (a stopped input sends no message). An
+	 * implementation value, not an approved one: the publish rate of the constraint is OPEN-032.
+	 */
+	static constexpr uint32_t kEvaluationIntervalUs{50000U};
+
 	void Run() override;
 
 	void updateConfig();
 	void process(const obstacle_distance_s &input);
-	void publish(const obstacle_distance_s &input, uint32_t input_flags, bool input_ok);
+	void evaluate();
 
 	uORB::Publication<cp_brake_constraints_s> _constraints_pub{ORB_ID(cp_brake_constraints)};
 	uORB::Publication<cp_brake_status_s> _status_pub{ORB_ID(cp_brake_status)};
 
 	uORB::SubscriptionCallbackWorkItem _obstacle_sub{this, ORB_ID(obstacle_distance)};
 	uORB::Subscription _parameter_update_sub{ORB_ID(parameter_update)};
+	uORB::Subscription _takeoff_status_sub{ORB_ID(takeoff_status)};
+	uORB::Subscription _local_position_sub{ORB_ID(vehicle_local_position)};
 
 	cp_brake::ConfigInputs _config{};
 	uint32_t _config_faults{0U};
@@ -111,10 +126,22 @@ private:
 	cp_brake::SectorCaps _raw_caps{};
 	cp_brake::SectorFlags _sector_valid{};
 
-	uint64_t _last_sample_timestamp{0U};
+	uint64_t _last_sample_timestamp{0U};   ///< acquisition time of the latest accepted map, 0 before the first
+	uint32_t _input_flags{0U};             ///< input check result of the latest obstacle_distance
 	hrt_abstime _last_constraint_timestamp{0U};
 	uint32_t _input_count{0U};
 	uint32_t _input_rejected_count{0U};
+
+	uint8_t _takeoff_state{0U};            ///< takeoff_status; 0 (uninitialized) until one is published
+	bool _px4_state_valid{false};          ///< estimator position, velocity and heading usable for control
+
+	// Inputs of the state machine that no command sets yet: the MAVLink command that sets the
+	// acknowledgement and the override is a separate issue (OPEN-020). The acknowledgement is an
+	// event: evaluate() clears it after use.
+	bool _pilot_ack{false};
+	bool _pilot_override{false};
+
+	bool _safe_stop_latched{false};
 	uint32_t _reason_flags{0U};
 	uint8_t _state{cp_brake_constraints_s::STATE_DISABLED};
 
