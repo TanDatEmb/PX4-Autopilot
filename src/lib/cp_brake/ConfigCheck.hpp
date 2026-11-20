@@ -44,7 +44,9 @@
 #include <cstdint>
 
 #include "CapLimiter.hpp"
+#include "HeadingHistory.hpp"
 #include "StoppingModel.hpp"
+#include "TimeSync.hpp"
 
 namespace cp_brake
 {
@@ -57,6 +59,10 @@ struct ConfigInputs {
 	float stock_cp_dist_m;            ///< CP_DIST: the stock collision prevention is active when > 0
 	float mpc_xy_vel_max_m_s;         ///< MPC_XY_VEL_MAX: must not exceed the model maximum speed
 	bool second_obstacle_source;      ///< another obstacle_distance publisher is enabled (SIM_GZ_EN_LIDAR)
+	HeadingHistoryParams heading_history;  ///< depth and gap limit of the heading history (OPEN-032)
+	TimeSyncLimits time_sync_limits;  ///< limits of the time-alignment gate (OPEN-033)
+	bool time_sync_enabled;           ///< UXRCE_DDS_SYNCT is on, so timesync_status exists
+	bool time_sync_required;          ///< this build is a hardware one: ADR 0003 requires UXRCE_DDS_SYNCT=1
 };
 
 namespace ConfigFaults
@@ -68,6 +74,9 @@ constexpr uint32_t kConstraintAge{1U << 3};
 constexpr uint32_t kStockCollisionPreventionActive{1U << 4};
 constexpr uint32_t kSpeedLimit{1U << 5};
 constexpr uint32_t kSecondObstacleSource{1U << 6};
+constexpr uint32_t kHeadingHistory{1U << 7};
+constexpr uint32_t kTimeSyncLimits{1U << 8};
+constexpr uint32_t kTimeSyncDisabled{1U << 9};
 } // namespace ConfigFaults
 
 /** Bit set of ConfigFaults; 0 means the configuration is valid. */

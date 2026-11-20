@@ -85,7 +85,8 @@ struct StateInputs {
 	bool has_sample;             ///< a map has been accepted
 	float sample_age_s;          ///< age of the latest accepted map [s]; negative or non-finite is stale
 	float sample_age_stop_s;     ///< CPB_AGE_STOP [s]; a limit that is not a positive number is stale
-	bool heading_valid;          ///< a heading exists for the sample time (false until issue #94)
+	bool heading_valid;          ///< the heading history gives a heading for the sample time
+	bool time_sync_good;         ///< the time alignment of the latest map passed the gate (issue #94)
 	bool px4_state_valid;        ///< the PX4 estimator and heading are valid; false gives UNQUALIFIED
 	uint8_t takeoff_state;       ///< takeoff_status.takeoff_state
 	bool limiting;               ///< some cap is below the maximum speed

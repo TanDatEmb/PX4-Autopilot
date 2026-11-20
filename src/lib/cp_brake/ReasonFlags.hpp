@@ -50,7 +50,7 @@ constexpr uint32_t kReasonFrameInvalid{1U << 1};
 constexpr uint32_t kReasonDataInvalid{1U << 2};
 /** No accepted map yet, or its age reached CPB_AGE_STOP, or the age or its limit is unusable. */
 constexpr uint32_t kReasonSampleStale{1U << 3};
-/** No heading exists for the sample time (heading validity is an input, false until #94). */
+/** No heading exists for the sample time (the heading history has no value for it). */
 constexpr uint32_t kReasonNoHeading{1U << 4};
 /** The PX4 estimator or heading is invalid: the claim is unqualified and CP adds no action (ADR 0007). */
 constexpr uint32_t kReasonUnqualified{1U << 5};
@@ -60,6 +60,8 @@ constexpr uint32_t kReasonBlocked{1U << 6};
 constexpr uint32_t kReasonAckRequired{1U << 7};
 /** A pilot override is active: the constraint is not enforced (logged). */
 constexpr uint32_t kReasonOverride{1U << 8};
+/** The time alignment of the latest map is not good: the map is not used, its sectors are unknown. */
+constexpr uint32_t kReasonTimeSync{1U << 9};
 
 /** The reasons that make the caps unusable as a whole (no evidence of free space). */
 constexpr uint32_t kReasonConstraintFaults{kReasonInvalidConfig | kReasonFrameInvalid | kReasonDataInvalid

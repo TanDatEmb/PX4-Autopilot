@@ -27,3 +27,4 @@ uint32 REASON_UNQUALIFIED = 32		# the PX4 estimator or heading is invalid, no CP
 uint32 REASON_BLOCKED = 64		# the caps leave no horizontal motion
 uint32 REASON_ACK_REQUIRED = 128	# a safe stop is latched and waits for the pilot acknowledgement
 uint32 REASON_OVERRIDE = 256		# a pilot override is active, the constraint is not enforced
+uint32 REASON_TIME_SYNC = 512		# the time alignment of the latest map is not good, the map is not used

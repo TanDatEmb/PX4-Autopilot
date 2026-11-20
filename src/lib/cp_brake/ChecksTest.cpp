@@ -64,6 +64,10 @@ ConfigInputs validConfig()
 	c.stock_cp_dist_m = -1.f;
 	c.mpc_xy_vel_max_m_s = 12.f;
 	c.second_obstacle_source = false;
+	c.heading_history = HeadingHistoryParams{16, 0.1f};
+	c.time_sync_limits = TimeSyncLimits{0.25f, 0.125f, 0.5f};
+	c.time_sync_enabled = true;
+	c.time_sync_required = true;
 	return c;
 }
 
@@ -141,6 +145,64 @@ TEST(ConfigCheckTest, InvalidStoppingParametersAlsoFailTheSpeedLimitCheck)
 	ConfigInputs c = validConfig();
 	c.stopping.max_speed_m_s = 0.f;
 	EXPECT_EQ(checkConfig(c), ConfigFaults::kStoppingParams | ConfigFaults::kSpeedLimit);
+}
+
+TEST(ConfigCheckTest, TheHeadingHistorySentinelsAreAFault)
+{
+	// OPEN-032: the depth and the gap limit have no approved value, so they hold a sentinel
+	ConfigInputs c = validConfig();
+	c.heading_history.depth = -1;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kHeadingHistory);
+
+	c = validConfig();
+	c.heading_history.max_gap_s = -1.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kHeadingHistory);
+
+	c = validConfig();
+	c.heading_history.depth = static_cast<int32_t>(kHeadingHistoryCapacity) + 1;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kHeadingHistory);
+}
+
+TEST(ConfigCheckTest, TheTimeSyncLimitSentinelsAreAFault)
+{
+	// OPEN-033: the three limits of the time-alignment gate have no approved value
+	ConfigInputs c = validConfig();
+	c.time_sync_limits.max_rtt_s = -1.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kTimeSyncLimits);
+
+	c = validConfig();
+	c.time_sync_limits.max_offset_deviation_s = -1.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kTimeSyncLimits);
+
+	c = validConfig();
+	c.time_sync_limits.max_status_age_s = -1.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kTimeSyncLimits);
+}
+
+TEST(ConfigCheckTest, TheLimitsAreRequiredEvenWhereTheGateIsNotUsed)
+{
+	// the simulation profile has no timesync_status, but no CPB_ parameter may keep its sentinel
+	ConfigInputs c = validConfig();
+	c.time_sync_enabled = false;
+	c.time_sync_required = false;
+	c.time_sync_limits.max_rtt_s = -1.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kTimeSyncLimits);
+}
+
+TEST(ConfigCheckTest, HardwareWithoutTheUxrceTimeSyncIsAFaultAndSimulationIsNot)
+{
+	// ADR 0003: hardware runs UXRCE_DDS_SYNCT=1, only simulation and replay run it at 0
+	ConfigInputs c = validConfig();
+	c.time_sync_enabled = false;
+	c.time_sync_required = true;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kTimeSyncDisabled);
+
+	c.time_sync_required = false;
+	EXPECT_EQ(checkConfig(c), 0U);
+
+	c.time_sync_enabled = true;
+	c.time_sync_required = true;
+	EXPECT_EQ(checkConfig(c), 0U);
 }
 
 TEST(InputCheckTest, AnInterfaceConformingInputIsValid)

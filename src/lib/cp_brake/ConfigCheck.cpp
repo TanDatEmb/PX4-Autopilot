@@ -72,6 +72,21 @@ uint32_t checkConfig(const ConfigInputs &inputs)
 		faults |= ConfigFaults::kSecondObstacleSource;
 	}
 
+	// OPEN-032: the heading history has no approved depth and gap limit yet, so they are sentinels
+	if (!isValid(inputs.heading_history)) {
+		faults |= ConfigFaults::kHeadingHistory;
+	}
+
+	// OPEN-033: the same for the limits of the time-alignment gate, required even where it is not used
+	if (!isValid(inputs.time_sync_limits)) {
+		faults |= ConfigFaults::kTimeSyncLimits;
+	}
+
+	// ADR 0003: hardware runs the uXRCE-DDS time synchronization; only simulation and replay do not
+	if (inputs.time_sync_required && !inputs.time_sync_enabled) {
+		faults |= ConfigFaults::kTimeSyncDisabled;
+	}
+
 	return faults;
 }
 
