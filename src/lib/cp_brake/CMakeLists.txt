@@ -37,6 +37,7 @@ px4_add_library(cp_brake_model
 	HeadingHistory.cpp
 	InputCheck.cpp
 	MapTimeline.cpp
+	SetpointLimiter.cpp
 	StateMachine.cpp
 	StoppingModel.cpp
 	TimeSync.cpp
@@ -54,6 +55,7 @@ if(TARGET unit-ModeRequestGuard)
 		CP_BRAKE_LIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 		CP_BRAKE_MODULE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../modules/cp_brake")
 endif()
+px4_add_unit_gtest(SRC SetpointLimiterTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC StateMachineTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC StoppingModelTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC TimeSyncTest.cpp LINKLIBS cp_brake_model)

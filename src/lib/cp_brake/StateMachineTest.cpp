@@ -841,3 +841,15 @@ TEST(StateMachineTest, TheSameInputsGiveTheSameResult)
 		EXPECT_EQ(a.safe_stop_latched, b.safe_stop_latched);
 	}
 }
+
+TEST(StateMachineTest, OnlyTheActiveStatesEnforceTheCaps)
+{
+	EXPECT_FALSE(cp_brake::isEnforcingState(cp_brake::kStateDisabled));
+	EXPECT_FALSE(cp_brake::isEnforcingState(cp_brake::kStateObserverOnly));
+	EXPECT_FALSE(cp_brake::isEnforcingState(cp_brake::kStateNotReady));
+	EXPECT_TRUE(cp_brake::isEnforcingState(cp_brake::kStateActiveClear));
+	EXPECT_TRUE(cp_brake::isEnforcingState(cp_brake::kStateBraking));
+	EXPECT_TRUE(cp_brake::isEnforcingState(cp_brake::kStateSafeStop));
+	EXPECT_FALSE(cp_brake::isEnforcingState(6));
+	EXPECT_FALSE(cp_brake::isEnforcingState(255));
+}

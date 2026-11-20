@@ -35,6 +35,13 @@
 #include <PositionControl.hpp>
 #include <px4_defines.h>
 
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+
+#include <lib/cp_brake/ReasonFlags.hpp>
+#include <lib/cp_brake/StateMachine.hpp>
+
 using namespace matrix;
 
 TEST(PositionControlTest, EmptySetpoint)
@@ -420,4 +427,723 @@ TEST_F(PositionControlBasicTest, IntegratorWindupWithInvalidSetpoint)
 	Eulerf euler_att(Quatf(_attitude.q_d));
 	EXPECT_FLOAT_EQ(euler_att.phi(), 0.f);
 	EXPECT_FLOAT_EQ(euler_att.theta(), 0.f);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Collision prevention limiter hook (issue #65, collision-prevention ICD-CP-04, OPEN-035)
+//
+// The numbers here are test fixtures. In particular the 0.5 s constraint age limit is not the
+// unapproved CPB_CSTR_AGE, which stays a sentinel in the module.
+// ---------------------------------------------------------------------------------------------
+
+namespace
+{
+
+constexpr uint64_t kNowUs{10000000U};
+constexpr float kAgeLimitS{0.5f};
+constexpr float kFreeCap{12.f};
+
+bool sameBits(float a, float b)
+{
+	return std::memcmp(&a, &b, sizeof(float)) == 0;
+}
+
+} // namespace
+
+class CollisionLimiterTest : public ::testing::Test
+{
+public:
+	CollisionLimiterTest()
+	{
+		configure(_position_control, 4.f);
+		configure(_baseline, 4.f);
+		resetInputs();
+	}
+
+	static void configure(PositionControl &control, const float velocity_gain)
+	{
+		const Vector3f p(velocity_gain, velocity_gain, 8.f);
+		const Vector3f i(velocity_gain > 0.f ? 0.4f : 0.f, velocity_gain > 0.f ? 0.4f : 0.f, 0.f);
+		const Vector3f d(0.f, 0.f, 0.f);
+		control.setPositionGains(Vector3f(0.95f, 0.95f, 1.f));
+		control.setVelocityGains(p, i, d);
+		control.setVelocityLimits(12.f, 3.f, 1.5f);
+		control.setThrustLimits(0.1f, 0.9f);
+		control.setHorizontalThrustMargin(0.3f);
+		control.setTiltLimit(1.f);
+		control.setHoverThrust(.5f);
+	}
+
+	void resetInputs()
+	{
+		_input = PositionControl::empty_trajectory_setpoint;
+		_input.position[2] = -10.f; // altitude hold, so the vertical axis has a setpoint
+		_input.velocity[0] = 0.f;
+		_input.velocity[1] = 0.f;
+		_states = PositionControlStates{};
+		_states.position = Vector3f(0.f, 0.f, -10.f);
+		_states.velocity = Vector3f(0.f, 0.f, 0.f);
+		_states.acceleration = Vector3f(0.f, 0.f, 0.f);
+		_states.yaw = 0.f;
+
+		_context = cp_brake::HookContext{true, true, true, kNowUs, kAgeLimitS};
+		_constraint = cp_brake::HookConstraint{};
+		_constraint.present = true;
+		_constraint.timestamp_us = kNowUs - 20000U;
+		_constraint.heading_rad = 0.f;
+		_constraint.heading_valid = true;
+
+		for (std::size_t sector = 0; sector < cp_brake::kSectorCount; ++sector) {
+			_constraint.caps_m_s[sector] = kFreeCap;
+		}
+
+		_constraint.enforcement_active = true;
+		_constraint.valid = true;
+		_constraint.state = cp_brake::kStateActiveClear;
+		_constraint.reason_flags = 0U;
+	}
+
+	void setVelocity(const float north, const float east)
+	{
+		_input.velocity[0] = north;
+		_input.velocity[1] = east;
+	}
+
+	void setFeedForward(const float north, const float east)
+	{
+		_input.acceleration[0] = north;
+		_input.acceleration[1] = east;
+	}
+
+	// one call of update() on the controller with the hook and one on the controller without it
+	void run()
+	{
+		for (PositionControl *control : {&_position_control, &_baseline}) {
+			control->setState(_states);
+			control->setInputSetpoint(_input);
+		}
+
+		_position_control.setCollisionLimiter(_context, _constraint);
+		_ok = _position_control.update(DT);
+		_baseline_ok = _baseline.update(DT);
+		_output = vehicle_local_position_setpoint_s{};
+		_baseline_output = vehicle_local_position_setpoint_s{};
+		_position_control.getLocalPositionSetpoint(_output);
+		_baseline.getLocalPositionSetpoint(_baseline_output);
+		_attitude = vehicle_attitude_setpoint_s{};
+		_baseline_attitude = vehicle_attitude_setpoint_s{};
+		_position_control.getAttitudeSetpoint(_attitude);
+		_baseline.getAttitudeSetpoint(_baseline_attitude);
+	}
+
+	const CollisionLimiterRecord &record() const { return _position_control.collisionLimiterRecord(); }
+
+	void expectSameAsBaseline() const
+	{
+		EXPECT_EQ(_ok, _baseline_ok);
+		EXPECT_TRUE(sameBits(_output.x, _baseline_output.x));
+		EXPECT_TRUE(sameBits(_output.y, _baseline_output.y));
+		EXPECT_TRUE(sameBits(_output.z, _baseline_output.z));
+		EXPECT_TRUE(sameBits(_output.yaw, _baseline_output.yaw));
+		EXPECT_TRUE(sameBits(_output.yawspeed, _baseline_output.yawspeed));
+		EXPECT_TRUE(sameBits(_output.vx, _baseline_output.vx));
+		EXPECT_TRUE(sameBits(_output.vy, _baseline_output.vy));
+		EXPECT_TRUE(sameBits(_output.vz, _baseline_output.vz));
+
+		for (int axis = 0; axis < 3; ++axis) {
+			EXPECT_TRUE(sameBits(_output.acceleration[axis], _baseline_output.acceleration[axis])) << axis;
+			EXPECT_TRUE(sameBits(_output.thrust[axis], _baseline_output.thrust[axis])) << axis;
+			EXPECT_TRUE(sameBits(_attitude.thrust_body[axis], _baseline_attitude.thrust_body[axis])) << axis;
+		}
+
+		for (int i = 0; i < 4; ++i) {
+			EXPECT_TRUE(sameBits(_attitude.q_d[i], _baseline_attitude.q_d[i])) << i;
+		}
+	}
+
+	// the vertical axis and the yaw are never touched by the hook
+	void expectVerticalAndYawAsBaseline() const
+	{
+		EXPECT_TRUE(sameBits(_output.z, _baseline_output.z));
+		EXPECT_TRUE(sameBits(_output.vz, _baseline_output.vz));
+		EXPECT_TRUE(sameBits(_output.yaw, _baseline_output.yaw));
+		EXPECT_TRUE(sameBits(_output.yawspeed, _baseline_output.yawspeed));
+		EXPECT_TRUE(sameBits(_output.acceleration[2], _baseline_output.acceleration[2]));
+	}
+
+	void expectSafeStop(const uint32_t reasons_that_must_be_set) const
+	{
+		EXPECT_TRUE(_ok);
+		EXPECT_EQ(record().result.action, cp_brake::HookAction::kSafeStop);
+		EXPECT_EQ(record().result.reason_flags & reasons_that_must_be_set, reasons_that_must_be_set);
+		EXPECT_EQ(_output.vx, 0.f);
+		EXPECT_EQ(_output.vy, 0.f);
+		EXPECT_EQ(record().vel_sp_out_m_s[0], 0.f);
+		EXPECT_EQ(record().vel_sp_out_m_s[1], 0.f);
+		EXPECT_EQ(record().acc_sp_out_m_s2[0], 0.f);
+		EXPECT_EQ(record().acc_sp_out_m_s2[1], 0.f);
+		expectVerticalAndYawAsBaseline();
+	}
+
+	void expectAllFinite() const
+	{
+		EXPECT_TRUE(std::isfinite(_output.vx));
+		EXPECT_TRUE(std::isfinite(_output.vy));
+
+		for (int axis = 0; axis < 3; ++axis) {
+			EXPECT_TRUE(std::isfinite(_output.acceleration[axis])) << axis;
+			EXPECT_TRUE(std::isfinite(_output.thrust[axis])) << axis;
+		}
+	}
+
+	static constexpr float DT{0.01f};
+
+	PositionControl _position_control;
+	PositionControl _baseline; // never given a hook: the unchanged controller
+	trajectory_setpoint_s _input{};
+	PositionControlStates _states{};
+	cp_brake::HookContext _context{};
+	cp_brake::HookConstraint _constraint{};
+	bool _ok{false};
+	bool _baseline_ok{false};
+	vehicle_local_position_setpoint_s _output{};
+	vehicle_local_position_setpoint_s _baseline_output{};
+	vehicle_attitude_setpoint_s _attitude{};
+	vehicle_attitude_setpoint_s _baseline_attitude{};
+};
+
+// zero velocity gains: the output acceleration is the feed-forward as the hook left it
+class CollisionLimiterFeedForwardTest : public CollisionLimiterTest
+{
+public:
+	CollisionLimiterFeedForwardTest()
+	{
+		configure(_position_control, 0.f);
+		configure(_baseline, 0.f);
+	}
+};
+
+TEST_F(CollisionLimiterTest, AControllerThatWasNeverGivenAHookIsTransparent)
+{
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kTransparent);
+	expectSameAsBaseline();
+}
+
+TEST_F(CollisionLimiterTest, CpbEnOffIsBitIdenticalToTheBaselineWhateverTheConstraintSays)
+{
+	// the most hostile constraint: safe stop, nothing valid, caps 0, no number as heading
+	_context.enabled = false;
+	_constraint.state = cp_brake::kStateSafeStop;
+	_constraint.valid = false;
+	_constraint.heading_rad = NAN;
+
+	for (std::size_t sector = 0; sector < cp_brake::kSectorCount; ++sector) {
+		_constraint.caps_m_s[sector] = 0.f;
+	}
+
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kTransparent);
+	EXPECT_EQ(record().result.reason_flags, 0U);
+	expectSameAsBaseline();
+	EXPECT_TRUE(_ok);
+	EXPECT_FLOAT_EQ(_output.vx, 8.f);
+	EXPECT_FLOAT_EQ(_output.vy, 2.f);
+}
+
+TEST_F(CollisionLimiterTest, BeforeTakeoffStateFlightTheHookIsTransparentWhetherTheConstraintIsValidOrNot)
+{
+	_context.in_flight = false;
+	setVelocity(8.f, 0.f);
+	_constraint.caps_m_s[0] = 0.f;
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kTransparent);
+	expectSameAsBaseline();
+	EXPECT_FLOAT_EQ(_output.vx, 8.f);
+
+	// invalid constraint, stale, no heading: still the baseline on the ground
+	_constraint.valid = false;
+	_constraint.heading_valid = false;
+	_constraint.timestamp_us = 0U;
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kTransparent);
+	EXPECT_FLOAT_EQ(_output.vx, 8.f);
+}
+
+TEST_F(CollisionLimiterTest, InAnyOtherNavigationStateTheHookIsTransparentAndSaysWhy)
+{
+	_context.nav_state_enforced = false;
+	setVelocity(8.f, 0.f);
+	setFeedForward(1.f, 0.f);
+	_constraint.caps_m_s[0] = 0.f;
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kTransparent);
+	EXPECT_EQ(record().result.reason_flags, cp_brake::kReasonNavState);
+	expectSameAsBaseline();
+	EXPECT_FLOAT_EQ(_output.vx, 8.f);
+}
+
+TEST_F(CollisionLimiterTest, EachCardinalCapLimitsOnlyTheComponentTowardItself)
+{
+	const struct {
+		int sector;
+		Vector2f direction;
+	} cases[] = {{0, Vector2f(1.f, 0.f)}, {18, Vector2f(0.f, 1.f)}, {36, Vector2f(-1.f, 0.f)}, {54, Vector2f(0.f, -1.f)}};
+
+	for (const auto &c : cases) {
+		SCOPED_TRACE(c.sector);
+		resetInputs();
+		const Vector2f perpendicular(-c.direction(1), c.direction(0));
+		const Vector2f commanded = c.direction * 8.f + perpendicular * 2.f;
+		setVelocity(commanded(0), commanded(1));
+		_constraint.caps_m_s[c.sector] = 3.f;
+		run();
+
+		const Vector2f out(_output.vx, _output.vy);
+		EXPECT_TRUE(_ok);
+		EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
+		EXPECT_EQ(record().result.active_sector, c.sector);
+		EXPECT_NEAR(out.dot(c.direction), 3.f, 1e-4f); // toward the sector: at its cap
+		EXPECT_NEAR(out.dot(perpendicular), 2.f, 1e-4f); // along it: untouched
+		expectVerticalAndYawAsBaseline();
+		expectAllFinite();
+	}
+}
+
+TEST_F(CollisionLimiterTest, ACapLimitsNothingWhenTheSetpointIsWithinIt)
+{
+	setVelocity(2.f, 1.f);
+	_constraint.caps_m_s[0] = 3.f;
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kClear);
+	expectSameAsBaseline();
+}
+
+TEST_F(CollisionLimiterTest, TheBrakingStateLimitsLikeActiveClear)
+{
+	_constraint.state = cp_brake::kStateBraking;
+	setVelocity(8.f, 0.f);
+	_constraint.caps_m_s[0] = 3.f;
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(_output.vx, 3.f, 1e-4f);
+}
+
+TEST_F(CollisionLimiterTest, SideAndRearObstaclesDoNotReduceForwardMotion)
+{
+	// ADR 0008: no global minimum range. Everything from the right side through the rear to the left
+	// side is blocked completely; the forward motion is the baseline.
+	for (int sector = 18; sector <= 54; ++sector) {
+		_constraint.caps_m_s[sector] = 0.f;
+	}
+
+	setVelocity(8.f, 0.f);
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kClear);
+	expectSameAsBaseline();
+	EXPECT_FLOAT_EQ(_output.vx, 8.f);
+}
+
+TEST_F(CollisionLimiterTest, AFrontObstacleDoesNotReduceRetreat)
+{
+	for (int sector = 0; sector < 18; ++sector) {
+		_constraint.caps_m_s[sector] = 0.f;
+		_constraint.caps_m_s[(72 - sector) % 72] = 0.f;
+	}
+
+	setVelocity(-8.f, 0.f);
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kClear);
+	expectSameAsBaseline();
+	EXPECT_FLOAT_EQ(_output.vx, -8.f);
+}
+
+TEST_F(CollisionLimiterTest, TheCapsAreRotatedWithTheHeadingOfTheConstraintNotTheCurrentHeading)
+{
+	_constraint.heading_rad = M_PI_2_F; // the map was taken facing east
+	_states.yaw = 0.f;                   // the vehicle now faces north
+	_constraint.caps_m_s[0] = 3.f;       // an obstacle in the sector that pointed east at the sample time
+
+	setVelocity(0.f, 8.f);
+	run();
+	EXPECT_NEAR(_output.vy, 3.f, 1e-4f);
+	EXPECT_NEAR(_output.vx, 0.f, 1e-4f);
+
+	resetInputs();
+	_constraint.heading_rad = M_PI_2_F;
+	_states.yaw = 0.f;
+	_constraint.caps_m_s[0] = 3.f;
+	setVelocity(8.f, 0.f); // north is not toward that sector
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kClear);
+	EXPECT_FLOAT_EQ(_output.vx, 8.f);
+}
+
+TEST_F(CollisionLimiterTest, APositionOnlyMissionSetpointIsLimitedToo)
+{
+	// no velocity setpoint at all: the position error term is what moves the vehicle
+	_input.velocity[0] = NAN;
+	_input.velocity[1] = NAN;
+	_input.position[0] = 30.f;
+	_input.position[1] = 0.f;
+	_constraint.caps_m_s[0] = 4.f;
+	run();
+	EXPECT_TRUE(_ok);
+	EXPECT_FLOAT_EQ(_baseline_output.vx, 12.f); // the baseline would fly at the limit
+	EXPECT_NEAR(_output.vx, 4.f, 1e-4f);
+	EXPECT_NEAR(_output.vy, 0.f, 1e-4f);
+}
+
+TEST_F(CollisionLimiterTest, TheRecordHoldsTheSetpointsBeforeAndAfter)
+{
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	_states.velocity = Vector3f(1.f, -1.f, 0.f);
+	_constraint.caps_m_s[0] = 3.f;
+	run();
+	EXPECT_FLOAT_EQ(record().vel_sp_in_m_s[0], 8.f);
+	EXPECT_FLOAT_EQ(record().vel_sp_in_m_s[1], 2.f);
+	EXPECT_FLOAT_EQ(record().acc_sp_in_m_s2[0], 1.f);
+	EXPECT_FLOAT_EQ(record().acc_sp_in_m_s2[1], 0.5f);
+	EXPECT_FLOAT_EQ(record().vel_m_s[0], 1.f);
+	EXPECT_FLOAT_EQ(record().vel_m_s[1], -1.f);
+	EXPECT_NEAR(record().vel_sp_out_m_s[0], 3.f, 1e-4f);
+	EXPECT_NEAR(record().vel_sp_out_m_s[1], 2.f, 1e-4f);
+	EXPECT_FLOAT_EQ(record().vel_sp_out_m_s[0], _output.vx);
+	EXPECT_FLOAT_EQ(record().vel_sp_out_m_s[1], _output.vy);
+}
+
+TEST_F(CollisionLimiterFeedForwardTest, TheFeedForwardTowardALimitingSectorFadesOutAsTheVehicleReachesTheCap)
+{
+	// cap 4 m/s ahead, the trajectory asks 8 m/s and accelerates at 2 m/s^2 (and 1.5 m/s^2 sideways)
+	const struct {
+		float speed_toward_m_s;
+		float expected_ff_m_s2;
+	} cases[] = {{-2.f, 2.f}, {0.f, 2.f}, {1.f, 1.5f}, {2.f, 1.f}, {3.f, 0.5f}, {4.f, 0.f}, {6.f, 0.f}};
+
+	for (const auto &c : cases) {
+		SCOPED_TRACE(c.speed_toward_m_s);
+		resetInputs();
+		setVelocity(8.f, 0.f);
+		setFeedForward(2.f, 1.5f);
+		_constraint.caps_m_s[0] = 4.f;
+		_states.velocity = Vector3f(c.speed_toward_m_s, 0.f, 0.f);
+		run();
+		EXPECT_TRUE(_ok);
+		EXPECT_NEAR(_output.acceleration[0], c.expected_ff_m_s2, 1e-5f);
+		EXPECT_NEAR(_output.acceleration[1], 1.5f, 1e-5f); // along the obstacle: untouched
+	}
+}
+
+TEST_F(CollisionLimiterFeedForwardTest, AZeroCapRemovesTheFeedForwardTowardItWhateverTheVehicleDoes)
+{
+	for (const float speed : {-2.f, 0.f, 2.f}) {
+		SCOPED_TRACE(speed);
+		resetInputs();
+		setVelocity(8.f, 0.f);
+		setFeedForward(2.f, 0.f);
+		_constraint.caps_m_s[0] = 0.f;
+		_states.velocity = Vector3f(speed, 0.f, 0.f);
+		run();
+		EXPECT_NEAR(_output.acceleration[0], 0.f, 1e-6f);
+		EXPECT_NEAR(_output.vx, 0.f, 1e-6f);
+	}
+}
+
+TEST_F(CollisionLimiterFeedForwardTest, FeedForwardAwayFromTheSectorIsKept)
+{
+	setVelocity(8.f, 0.f);
+	setFeedForward(-2.f, 0.f);
+	_constraint.caps_m_s[0] = 4.f;
+	run();
+	EXPECT_NEAR(_output.acceleration[0], -2.f, 1e-6f);
+}
+
+TEST_F(CollisionLimiterFeedForwardTest, AVehicleVelocityThatIsNotANumberRemovesTheFeedForwardTowardTheSector)
+{
+	// position-only setpoint, so the velocity state is not needed by the controller
+	_input.velocity[0] = NAN;
+	_input.velocity[1] = NAN;
+	_input.position[0] = 30.f;
+	_input.position[1] = 0.f;
+	setFeedForward(2.f, 0.f);
+	_states.velocity = Vector3f(NAN, NAN, 0.f);
+	_constraint.caps_m_s[0] = 4.f;
+	run();
+	EXPECT_TRUE(_ok);
+	EXPECT_NEAR(_output.vx, 4.f, 1e-4f);
+	EXPECT_NEAR(_output.acceleration[0], 0.f, 1e-6f);
+	expectAllFinite();
+}
+
+TEST_F(CollisionLimiterTest, AnUnsetFeedForwardStaysUnsetAndNothingNotANumberReachesTheOutput)
+{
+	setVelocity(8.f, 0.f);
+	_constraint.caps_m_s[0] = 3.f;
+	run();
+	EXPECT_TRUE(std::isnan(record().acc_sp_in_m_s2[0]));
+	EXPECT_TRUE(std::isnan(record().acc_sp_out_m_s2[0]));
+	EXPECT_TRUE(std::isnan(record().acc_sp_out_m_s2[1]));
+	EXPECT_TRUE(_ok);
+	expectAllFinite();
+}
+
+TEST_F(CollisionLimiterTest, ACapThatIsNotAFiniteNumberGreaterOrEqualZeroStopsTheVelocityTowardTheSector)
+{
+	for (const float bad : {NAN, INFINITY, -INFINITY, -1.f, -0.5f}) {
+		SCOPED_TRACE(bad);
+		resetInputs();
+		setVelocity(8.f, 2.f);
+		_constraint.caps_m_s[0] = bad;
+		run();
+		EXPECT_TRUE(_ok);
+		EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
+		EXPECT_NEAR(_output.vx, 0.f, 1e-3f); // stopped toward the sector
+		EXPECT_NEAR(_output.vy, 2.f, 1e-3f); // the rest of the motion is kept
+		expectAllFinite();
+	}
+}
+
+TEST_F(CollisionLimiterTest, WhenNoCapIsUsableTheHorizontalVelocityIsZero)
+{
+	for (std::size_t sector = 0; sector < cp_brake::kSectorCount; ++sector) {
+		_constraint.caps_m_s[sector] = NAN;
+	}
+
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 1.f);
+	run();
+	EXPECT_TRUE(_ok);
+	EXPECT_NEAR(_output.vx, 0.f, 1e-3f);
+	EXPECT_NEAR(_output.vy, 0.f, 1e-3f);
+	expectAllFinite();
+}
+
+TEST_F(CollisionLimiterTest, AVelocitySetpointThatIsNotFiniteIsLeftAlone)
+{
+	setVelocity(INFINITY, 0.f);
+	_constraint.caps_m_s[0] = 3.f;
+	run();
+	EXPECT_EQ(_ok, _baseline_ok); // the controller's own rejection, unchanged
+	EXPECT_TRUE(sameBits(_output.vx, _baseline_output.vx));
+	EXPECT_TRUE(sameBits(_output.vy, _baseline_output.vy));
+}
+
+TEST_F(CollisionLimiterTest, RepeatedCallsInOneCycleGiveTheSameResult)
+{
+	// PX4 calls update() up to three times per cycle with a setpoint it set each time
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	_states.velocity = Vector3f(1.f, 0.f, 0.f);
+	_constraint.caps_m_s[0] = 3.f;
+	_constraint.caps_m_s[1] = 5.f;
+
+	CollisionLimiterRecord first{};
+	float first_vx = 0.f;
+	float first_vy = 0.f;
+
+	for (int call = 0; call < 3; ++call) {
+		SCOPED_TRACE(call);
+		_position_control.setState(_states);
+		_position_control.setInputSetpoint(_input);
+		_position_control.setCollisionLimiter(_context, _constraint);
+		EXPECT_TRUE(_position_control.update(DT));
+		vehicle_local_position_setpoint_s output{};
+		_position_control.getLocalPositionSetpoint(output);
+		const CollisionLimiterRecord &r = _position_control.collisionLimiterRecord();
+
+		if (call == 0) {
+			first = r;
+			first_vx = output.vx;
+			first_vy = output.vy;
+			EXPECT_EQ(r.result.action, cp_brake::HookAction::kLimited);
+
+		} else {
+			EXPECT_EQ(r.result.action, first.result.action);
+			EXPECT_EQ(r.result.reason_flags, first.result.reason_flags);
+			EXPECT_EQ(r.result.active_sector, first.result.active_sector);
+			EXPECT_TRUE(sameBits(output.vx, first_vx));
+			EXPECT_TRUE(sameBits(output.vy, first_vy));
+
+			for (int axis = 0; axis < 2; ++axis) {
+				EXPECT_TRUE(sameBits(r.vel_sp_in_m_s[axis], first.vel_sp_in_m_s[axis]));
+				EXPECT_TRUE(sameBits(r.vel_sp_out_m_s[axis], first.vel_sp_out_m_s[axis]));
+				EXPECT_TRUE(sameBits(r.acc_sp_in_m_s2[axis], first.acc_sp_in_m_s2[axis]));
+				EXPECT_TRUE(sameBits(r.acc_sp_out_m_s2[axis], first.acc_sp_out_m_s2[axis]));
+			}
+		}
+	}
+}
+
+TEST_F(CollisionLimiterTest, NoConstraintAtAllInFlightIsASafeStop)
+{
+	_constraint = cp_brake::HookConstraint{};
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	expectSafeStop(cp_brake::kReasonConstraintStale);
+}
+
+TEST_F(CollisionLimiterTest, AStaleConstraintIsASafeStop)
+{
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+
+	// exactly at the limit is stale (the rule of the state machine for the sample age)
+	_constraint.timestamp_us = kNowUs - 500000U;
+	run();
+	expectSafeStop(cp_brake::kReasonConstraintStale);
+
+	_constraint.timestamp_us = kNowUs - 3000000U;
+	run();
+	expectSafeStop(cp_brake::kReasonConstraintStale);
+
+	// a constraint stamped after now has a negative age: stale
+	_constraint.timestamp_us = kNowUs + 1000U;
+	run();
+	expectSafeStop(cp_brake::kReasonConstraintStale);
+}
+
+TEST_F(CollisionLimiterTest, AConstraintJustInsideTheAgeLimitIsUsed)
+{
+	setVelocity(8.f, 0.f);
+	_constraint.timestamp_us = kNowUs - 499999U;
+	_constraint.caps_m_s[0] = 3.f;
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(_output.vx, 3.f, 1e-4f);
+}
+
+TEST_F(CollisionLimiterTest, AnAgeLimitThatIsNotSetIsASafeStop)
+{
+	// CPB_CSTR_AGE is a sentinel (-1) until the owner approves a value: fail safe, pick nothing
+	for (const float limit : {-1.f, 0.f, NAN, INFINITY}) {
+		SCOPED_TRACE(limit);
+		resetInputs();
+		_context.constraint_age_limit_s = limit;
+		setVelocity(8.f, 2.f);
+		setFeedForward(1.f, 0.5f);
+		run();
+		expectSafeStop(cp_brake::kReasonConstraintStale);
+	}
+}
+
+TEST_F(CollisionLimiterTest, NoHeadingForTheSampleTimeIsASafeStopWhenThePx4StateIsValid)
+{
+	_constraint.heading_valid = false;
+	_constraint.reason_flags = cp_brake::kReasonNoHeading; // what cp_brake reports
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	expectSafeStop(cp_brake::kReasonNoHeading);
+
+	// the hook says it too when the constraint did not
+	_constraint.reason_flags = 0U;
+	run();
+	expectSafeStop(cp_brake::kReasonNoHeading);
+}
+
+TEST_F(CollisionLimiterTest, AHeadingThatIsNotANumberIsASafeStopAndMalformed)
+{
+	for (const float bad : {NAN, INFINITY}) {
+		SCOPED_TRACE(bad);
+		_constraint.heading_rad = bad;
+		setVelocity(8.f, 2.f);
+		setFeedForward(1.f, 0.5f);
+		run();
+		expectSafeStop(cp_brake::kReasonNoHeading | cp_brake::kReasonConstraintMalformed);
+		expectAllFinite();
+	}
+}
+
+TEST_F(CollisionLimiterTest, AnInvalidPx4StateMeansNoActionAtAll)
+{
+	// ADR 0007: UNQUALIFIED, CP adds no action, the PX4 failsafes act. cp_brake reports it as NOT_READY
+	// without enforcement, and without a heading.
+	_constraint.enforcement_active = false;
+	_constraint.state = cp_brake::kStateNotReady;
+	_constraint.heading_valid = false;
+	_constraint.reason_flags = cp_brake::kReasonUnqualified | cp_brake::kReasonNoHeading;
+	_constraint.caps_m_s[0] = 0.f;
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	EXPECT_EQ(record().result.action, cp_brake::HookAction::kNoAction);
+	EXPECT_EQ(record().result.reason_flags, cp_brake::kReasonUnqualified | cp_brake::kReasonNoHeading);
+	expectSameAsBaseline();
+	EXPECT_FLOAT_EQ(_output.vx, 8.f);
+}
+
+TEST_F(CollisionLimiterTest, AConstraintThatIsNotValidIsASafeStopWithItsOwnReasons)
+{
+	_constraint.valid = false;
+	_constraint.state = cp_brake::kStateSafeStop;
+	_constraint.reason_flags = cp_brake::kReasonInvalidConfig | cp_brake::kReasonAckRequired;
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	expectSafeStop(cp_brake::kReasonInvalidConfig | cp_brake::kReasonAckRequired);
+}
+
+TEST_F(CollisionLimiterTest, ALatchedSafeStopStaysAtZeroEvenWithUsableCaps)
+{
+	_constraint.state = cp_brake::kStateSafeStop;
+	_constraint.reason_flags = cp_brake::kReasonAckRequired;
+	setVelocity(8.f, 2.f);
+	setFeedForward(1.f, 0.5f);
+	run();
+	expectSafeStop(cp_brake::kReasonAckRequired);
+}
+
+TEST_F(CollisionLimiterTest, AnEnforcedStateTheHookCannotMapIsASafeStopAndMalformed)
+{
+	for (const uint8_t state : {cp_brake::kStateDisabled, cp_brake::kStateObserverOnly, cp_brake::kStateNotReady,
+				    static_cast<uint8_t>(6), static_cast<uint8_t>(255)}) {
+		SCOPED_TRACE(static_cast<int>(state));
+		_constraint.state = state; // enforcement_active is still true
+		setVelocity(8.f, 2.f);
+		run();
+		expectSafeStop(cp_brake::kReasonConstraintMalformed);
+	}
+}
+
+TEST_F(CollisionLimiterTest, ASafeStopLeavesTheVerticalAxisAndTheYawAlone)
+{
+	_input.position[2] = -12.f; // climbing demand
+	_input.yaw = 0.7f;
+	_input.yawspeed = 0.1f;
+	_input.velocity[2] = NAN;
+	_constraint.state = cp_brake::kStateSafeStop;
+	setVelocity(8.f, 2.f);
+	run();
+	expectSafeStop(0U);
+	EXPECT_TRUE(sameBits(_output.vz, _baseline_output.vz));
+	EXPECT_NE(_output.vz, 0.f);
+}
+
+TEST_F(CollisionLimiterTest, TheFeedForwardIsClearedInASafeStop)
+{
+	_constraint.state = cp_brake::kStateSafeStop;
+	setVelocity(8.f, 2.f);
+	setFeedForward(2.f, 1.f);
+	run();
+	expectSafeStop(0U);
+	EXPECT_EQ(record().acc_sp_in_m_s2[0], 2.f);
+	EXPECT_EQ(record().acc_sp_in_m_s2[1], 1.f);
+}
+
+TEST_F(CollisionLimiterTest, ASafeStopAlsoCoversAnAccelerationOnlySetpoint)
+{
+	// no velocity, no position: the vehicle would be driven by the acceleration alone
+	_input.velocity[0] = NAN;
+	_input.velocity[1] = NAN;
+	setFeedForward(2.f, 1.f);
+	_constraint.state = cp_brake::kStateSafeStop;
+	run();
+	expectSafeStop(0U);
+	expectAllFinite();
 }

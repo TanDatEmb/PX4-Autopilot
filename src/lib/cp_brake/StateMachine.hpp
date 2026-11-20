@@ -106,4 +106,11 @@ struct StateResult {
 /** Pure and deterministic: the same inputs give the same result. */
 StateResult evaluateState(const StateInputs &inputs);
 
+/**
+ * Whether the limiter hook may act in a state (cp_brake_constraints.enforcement_active): ACTIVE_CLEAR,
+ * BRAKING and SAFE_STOP. DISABLED, OBSERVER_ONLY (also the pilot override) and NOT_READY (also the
+ * unqualified PX4 state, ADR 0007) are not enforced, and neither is a value that is no state.
+ */
+bool isEnforcingState(uint8_t state);
+
 } // namespace cp_brake

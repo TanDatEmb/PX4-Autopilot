@@ -105,12 +105,20 @@ void PositionControl::setInputSetpoint(const trajectory_setpoint_s &setpoint)
 	_yawspeed_sp = setpoint.yawspeed;
 }
 
+void PositionControl::setCollisionLimiter(const cp_brake::HookContext &context,
+		const cp_brake::HookConstraint &constraint)
+{
+	_limiter_context = context;
+	_limiter_constraint = constraint;
+}
+
 bool PositionControl::update(const float dt)
 {
 	bool valid = _inputValid();
 
 	if (valid) {
 		_positionControl();
+		_applyCollisionLimiter();
 		_velocityControl(dt);
 
 		_yawspeed_sp = PX4_ISFINITE(_yawspeed_sp) ? _yawspeed_sp : 0.f;
@@ -135,6 +143,11 @@ void PositionControl::_positionControl()
 	_vel_sp.xy() = ControlMath::constrainXY(vel_sp_position.xy(), (_vel_sp - vel_sp_position).xy(), _lim_vel_horizontal);
 	// Constrain velocity in z-direction.
 	_vel_sp(2) = math::constrain(_vel_sp(2), -_lim_vel_up, _lim_vel_down);
+}
+
+void PositionControl::_applyCollisionLimiter()
+{
+	// skeleton, the body follows the tests
 }
 
 void PositionControl::_velocityControl(const float dt)

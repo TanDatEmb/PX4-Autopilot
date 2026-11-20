@@ -139,4 +139,11 @@ StateResult evaluateState(const StateInputs &in)
 	return out;
 }
 
+bool isEnforcingState(uint8_t state)
+{
+	// skeleton for the red run of the tests
+	(void)state;
+	return false;
+}
+
 } // namespace cp_brake

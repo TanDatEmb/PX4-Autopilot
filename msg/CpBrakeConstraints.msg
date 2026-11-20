@@ -28,3 +28,6 @@ uint32 REASON_BLOCKED = 64		# the caps leave no horizontal motion
 uint32 REASON_ACK_REQUIRED = 128	# a safe stop is latched and waits for the pilot acknowledgement
 uint32 REASON_OVERRIDE = 256		# a pilot override is active, the constraint is not enforced
 uint32 REASON_TIME_SYNC = 512		# the time alignment of the latest map is not good, the map is not used
+uint32 REASON_CONSTRAINT_STALE = 1024	# set by the hook: no constraint, one older than CPB_CSTR_AGE, or no usable age limit
+uint32 REASON_CONSTRAINT_MALFORMED = 2048	# set by the hook: a heading that is not a number, or an enforced state it cannot map
+uint32 REASON_NAV_STATE = 4096		# set by the hook: transparent, the navigation state is neither Position nor Mission
