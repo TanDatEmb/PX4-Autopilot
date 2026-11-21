@@ -90,4 +90,18 @@ const SectorCaps &CapLimiter::update(const SectorCaps &raw, const SectorFlags &v
 	return _caps;
 }
 
+const SectorCaps &CapLimiter::tighten(const SectorCaps &raw)
+{
+	for (std::size_t i = 0; i < kSectorCount; ++i) {
+		const float target = (std::isfinite(raw[i]) && raw[i] > 0.f) ? raw[i] : 0.f;
+
+		if (target < _caps[i]) {
+			_caps[i] = target;
+			_dwell_s[i] = 0.f;
+		}
+	}
+
+	return _caps;
+}
+
 } // namespace cp_brake

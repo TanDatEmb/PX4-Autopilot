@@ -102,6 +102,13 @@ public:
 	 */
 	const SectorCaps &update(const SectorCaps &raw, const SectorFlags &valid, float dt_s);
 
+	/**
+	 * Lower a cap to a raw cap that is below it, now, without a step in time: a cap never rises here and the
+	 * dwell of a sector that is not tightened is kept (a tightening restarts it). An invalid raw cap counts
+	 * as 0. For a raw cap recomputed between two maps, which may only tighten.
+	 */
+	const SectorCaps &tighten(const SectorCaps &raw);
+
 	const SectorCaps &caps() const { return _caps; }
 
 private:

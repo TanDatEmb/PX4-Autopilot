@@ -44,7 +44,9 @@
  * ACTIVE_CLEAR, BRAKING and SAFE_STOP). The heading of the sample time comes from a timestamped history of
  * vehicle_local_position.heading (lib/cp_brake/HeadingHistory.hpp, ADR 0019), and a map whose time
  * alignment fails the gate on timesync_status is not used (lib/cp_brake/TimeSync.hpp). The module
- * only publishes those two topics; it never requests a mode (ADR 0007).
+ * only publishes those two topics; it never requests a mode (ADR 0007). The range of each sector is
+ * corrected for the distance moved toward it since the sample time (lib/cp_brake/TravelledDistance.hpp,
+ * ADR 0020 D4); with no usable velocity or heading the map is unknown.
  */
 
 #pragma once
@@ -75,6 +77,7 @@
 #include "StateMachine.hpp"
 #include "StoppingModel.hpp"
 #include "TimeSync.hpp"
+#include "TravelledDistance.hpp"
 
 class CpBrake : public ModuleBase<CpBrake>, public ModuleParams, public px4::ScheduledWorkItem
 {
@@ -119,6 +122,7 @@ private:
 	void processHeadingAndTimeSync();
 	void process(const obstacle_distance_s &input);
 	void evaluate();
+	void tightenHeldMap();
 
 	uORB::Publication<cp_brake_constraints_s> _constraints_pub{ORB_ID(cp_brake_constraints)};
 	uORB::Publication<cp_brake_status_s> _status_pub{ORB_ID(cp_brake_status)};
@@ -146,6 +150,19 @@ private:
 
 	uint8_t _takeoff_state{0U};            ///< takeoff_status; 0 (uninitialized) until one is published
 	bool _px4_state_valid{false};          ///< estimator position, velocity and heading usable for control
+
+	// horizontal velocity of the latest estimate, for the distance moved since the sample (ADR 0020 D4)
+	bool _velocity_valid{false};           ///< v_xy_valid and both components finite
+	float _velocity_north_m_s{0.f};
+	float _velocity_east_m_s{0.f};
+	// the latest map that was used, kept so that its caps can be recomputed at every evaluation: the vehicle moves
+	// on between maps and the usable range falls with the distance moved since the sample (ADR 0020 D4)
+	uint16_t _held_distances_cm[cp_brake::kSectorCount] {};
+	uint16_t _held_min_cm{0};
+	uint16_t _held_max_cm{0};
+	uint64_t _held_timestamp{0};
+	bool _held_usable{false};
+	bool _map_travel_usable{false};        ///< the latest map had a usable travelled distance (else it is unknown)
 
 	// heading of the sample time (issue #94, ADR 0019)
 	cp_brake::HeadingHistory _heading_history{cp_brake::HeadingHistoryParams{-1, -1.f}};
@@ -177,6 +194,7 @@ private:
 		(ParamInt<px4::params::CPB_EN>) _param_cpb_en,
 		(ParamFloat<px4::params::CPB_MAX_V>) _param_cpb_max_v,
 		(ParamFloat<px4::params::CPB_A_BRK>) _param_cpb_a_brk,
+		(ParamFloat<px4::params::CPB_DECEL_MAX>) _param_cpb_decel_max,
 		(ParamFloat<px4::params::CPB_JERK>) _param_cpb_jerk,
 		(ParamFloat<px4::params::CPB_T_LAT>) _param_cpb_t_lat,
 		(ParamFloat<px4::params::CPB_MARGIN>) _param_cpb_margin,

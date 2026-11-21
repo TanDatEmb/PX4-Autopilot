@@ -258,3 +258,59 @@ TEST(CapLimiterTest, AGapLongerThanTheAgeLimitDoesNotRaiseACap)
 	EXPECT_EQ(limiter.update(raw, validAll(), kDt)[0], before);
 	EXPECT_NEAR(limiter.update(raw, validAll(), kDt)[0], before + 0.2f, 1e-5f);
 }
+
+TEST(CapLimiterTest, TightenLowersACapAndRestartsItsDwell)
+{
+	CapLimiter limiter(fixture());
+	const SectorCaps raw = rawAll(1.f);
+
+	// reach a cap of 0.2 after the dwell, then tighten to 0.1
+	limiter.update(raw, validAll(), kDt);
+	limiter.update(raw, validAll(), kDt);
+	limiter.update(raw, validAll(), kDt);
+	ASSERT_NEAR(limiter.caps()[0], 0.2f, 1e-6f);
+
+	limiter.tighten(rawAll(0.1f));
+	EXPECT_NEAR(limiter.caps()[0], 0.1f, 1e-6f);
+
+	// the dwell started again: two steps of 0.1 s change nothing, the third rises
+	EXPECT_NEAR(limiter.update(raw, validAll(), kDt)[0], 0.1f, 1e-6f);
+	EXPECT_NEAR(limiter.update(raw, validAll(), kDt)[0], 0.1f, 1e-6f);
+	EXPECT_NEAR(limiter.update(raw, validAll(), kDt)[0], 0.3f, 1e-6f);
+}
+
+TEST(CapLimiterTest, TightenNeverRaisesACapAndKeepsTheDwellOfAnUntouchedSector)
+{
+	CapLimiter limiter(fixture());
+	const SectorCaps raw = rawAll(1.f);
+
+	// two steps of dwell, then a tighten call that would only allow more: nothing changes
+	limiter.update(raw, validAll(), kDt);
+	limiter.update(raw, validAll(), kDt);
+	limiter.tighten(rawAll(5.f));
+	EXPECT_EQ(limiter.caps()[0], 0.f);
+
+	// the dwell was kept: the next step reaches it and the cap rises
+	EXPECT_NEAR(limiter.update(raw, validAll(), kDt)[0], 0.2f, 1e-6f);
+}
+
+TEST(CapLimiterTest, TightenReadsAnInvalidRawCapAsZeroAndSectorsAreIndependent)
+{
+	CapLimiter limiter(fixture());
+	SectorCaps raw = rawAll(1.f);
+
+	for (int i = 0; i < 6; ++i) {
+		limiter.update(raw, validAll(), kDt);
+	}
+
+	ASSERT_GT(limiter.caps()[0], 0.f);
+	ASSERT_GT(limiter.caps()[1], 0.f);
+	raw[0] = std::numeric_limits<float>::quiet_NaN();
+	raw[1] = -1.f;
+	raw[2] = 100.f;
+	const float untouched = limiter.caps()[2];
+	limiter.tighten(raw);
+	EXPECT_EQ(limiter.caps()[0], 0.f);
+	EXPECT_EQ(limiter.caps()[1], 0.f);
+	EXPECT_EQ(limiter.caps()[2], untouched);
+}

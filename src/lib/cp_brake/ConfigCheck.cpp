@@ -87,6 +87,14 @@ uint32_t checkConfig(const ConfigInputs &inputs)
 		faults |= ConfigFaults::kTimeSyncDisabled;
 	}
 
+	// ADR 0020 D4: the bound on the horizontal deceleration has no approved value (a sentinel fails), and
+	// it is not smaller than the braking acceleration of the model. A comparison that is false for a
+	// non-finite braking acceleration also fails, which is already a stopping-parameter fault.
+	if (!std::isfinite(inputs.decel_bound_m_s2) || inputs.decel_bound_m_s2 <= 0.f
+	    || !(inputs.decel_bound_m_s2 >= inputs.stopping.a_brake_m_s2)) {
+		faults |= ConfigFaults::kDecelBound;
+	}
+
 	return faults;
 }
 
