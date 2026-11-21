@@ -105,12 +105,20 @@ void PositionControl::setInputSetpoint(const trajectory_setpoint_s &setpoint)
 	_yawspeed_sp = setpoint.yawspeed;
 }
 
+void PositionControl::setCollisionLimiter(const cp_brake::HookContext &context,
+		const cp_brake::HookConstraint &constraint)
+{
+	_limiter_context = context;
+	_limiter_constraint = constraint;
+}
+
 bool PositionControl::update(const float dt)
 {
 	bool valid = _inputValid();
 
 	if (valid) {
 		_positionControl();
+		_applyCollisionLimiter();
 		_velocityControl(dt);
 
 		_yawspeed_sp = PX4_ISFINITE(_yawspeed_sp) ? _yawspeed_sp : 0.f;
@@ -135,6 +143,41 @@ void PositionControl::_positionControl()
 	_vel_sp.xy() = ControlMath::constrainXY(vel_sp_position.xy(), (_vel_sp - vel_sp_position).xy(), _lim_vel_horizontal);
 	// Constrain velocity in z-direction.
 	_vel_sp(2) = math::constrain(_vel_sp(2), -_lim_vel_up, _lim_vel_down);
+}
+
+void PositionControl::_applyCollisionLimiter()
+{
+	// The hook acts between the position and the velocity control, on the horizontal velocity setpoint
+	// (which already holds the position error term and the feed-forward) and on the horizontal
+	// feed-forward acceleration. It is a pure function of these and the inputs given with
+	// setCollisionLimiter(), so it gives the same result on each of the up to three calls per cycle.
+	// The vertical axis, the yaw and the integrators are not touched.
+	float vel_sp[2] = {_vel_sp(0), _vel_sp(1)};
+	float acc_sp[2] = {_acc_sp(0), _acc_sp(1)};
+	const float vel[2] = {_vel(0), _vel(1)};
+
+	_limiter_record.vel_sp_in_m_s[0] = vel_sp[0];
+	_limiter_record.vel_sp_in_m_s[1] = vel_sp[1];
+	_limiter_record.acc_sp_in_m_s2[0] = acc_sp[0];
+	_limiter_record.acc_sp_in_m_s2[1] = acc_sp[1];
+	_limiter_record.vel_m_s[0] = vel[0];
+	_limiter_record.vel_m_s[1] = vel[1];
+
+	_limiter_record.result = cp_brake::limitHorizontalSetpoint(_limiter_context, _limiter_constraint, vel_sp, acc_sp);
+
+	// nothing is written back unless the hook acted, so the other paths are the unchanged controller
+	if (_limiter_record.result.action == cp_brake::HookAction::kLimited
+	    || _limiter_record.result.action == cp_brake::HookAction::kSafeStop) {
+		_vel_sp(0) = vel_sp[0];
+		_vel_sp(1) = vel_sp[1];
+		_acc_sp(0) = acc_sp[0];
+		_acc_sp(1) = acc_sp[1];
+	}
+
+	_limiter_record.vel_sp_out_m_s[0] = vel_sp[0];
+	_limiter_record.vel_sp_out_m_s[1] = vel_sp[1];
+	_limiter_record.acc_sp_out_m_s2[0] = acc_sp[0];
+	_limiter_record.acc_sp_out_m_s2[1] = acc_sp[1];
 }
 
 void PositionControl::_velocityControl(const float dt)

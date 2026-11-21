@@ -139,4 +139,9 @@ StateResult evaluateState(const StateInputs &in)
 	return out;
 }
 
+bool isEnforcingState(uint8_t state)
+{
+	return state == kStateActiveClear || state == kStateBraking || state == kStateSafeStop;
+}
+
 } // namespace cp_brake

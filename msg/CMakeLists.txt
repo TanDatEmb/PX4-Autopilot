@@ -56,6 +56,7 @@ set(msg_files
 	CellularStatus.msg
 	CollisionConstraints.msg
 	CpBrakeConstraints.msg
+	CpBrakeHook.msg
 	CpBrakeStatus.msg
 	ControlAllocatorStatus.msg
 	Cpuload.msg

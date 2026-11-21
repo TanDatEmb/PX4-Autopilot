@@ -53,6 +53,9 @@ static_assert(cp_brake::kReasonBlocked == cp_brake_constraints_s::REASON_BLOCKED
 static_assert(cp_brake::kReasonAckRequired == cp_brake_constraints_s::REASON_ACK_REQUIRED, "reason flag");
 static_assert(cp_brake::kReasonOverride == cp_brake_constraints_s::REASON_OVERRIDE, "reason flag");
 static_assert(cp_brake::kReasonTimeSync == cp_brake_constraints_s::REASON_TIME_SYNC, "reason flag");
+static_assert(cp_brake::kReasonConstraintStale == cp_brake_constraints_s::REASON_CONSTRAINT_STALE, "reason flag");
+static_assert(cp_brake::kReasonConstraintMalformed == cp_brake_constraints_s::REASON_CONSTRAINT_MALFORMED, "reason flag");
+static_assert(cp_brake::kReasonNavState == cp_brake_constraints_s::REASON_NAV_STATE, "reason flag");
 static_assert(cp_brake::kStateDisabled == cp_brake_constraints_s::STATE_DISABLED, "state");
 static_assert(cp_brake::kStateObserverOnly == cp_brake_constraints_s::STATE_OBSERVER_ONLY, "state");
 static_assert(cp_brake::kStateNotReady == cp_brake_constraints_s::STATE_NOT_READY, "state");
@@ -352,7 +355,9 @@ void CpBrake::evaluate()
 	constraints.sample_timestamp = sample_timestamp;
 	constraints.heading_rad = heading.valid() ? heading.heading_rad : 0.f;
 	constraints.heading_valid = heading.valid();
-	constraints.enforcement_active = false; // no hook yet
+	// the limiter hook in mc_pos_control may act in these states only; it has the final say on
+	// CPB_EN, the flight phase, the navigation state and the age of this constraint
+	constraints.enforcement_active = cp_brake::isEnforcingState(_state);
 	constraints.valid = result.constraint_valid;
 	constraints.state = _state;
 	constraints.reason_flags = _reason_flags;
@@ -463,8 +468,9 @@ model and the dwell and rise limiter, runs the state machine (DISABLED, OBSERVER
 ACTIVE_CLEAR, BRAKING, SAFE_STOP), and publishes cp_brake_constraints and cp_brake_status. It keeps
 a timestamped history of the vehicle heading and interpolates it at the map timestamp, and it does
 not use a map whose time alignment fails the gate on timesync_status. The evaluation also runs on a
-fixed interval, so a stopped input is noticed by its age. It does not enforce the caps: the limiter
-hook is separate. It never requests a mode. Started at boot when CPB_EN is 1.
+fixed interval, so a stopped input is noticed by its age. It does not enforce the caps itself: the
+limiter hook in mc_pos_control applies them to the horizontal setpoint, and acts only in the states
+where enforcement_active is set. It never requests a mode. Started at boot when CPB_EN is 1.
 
 )DESCR_STR");
 

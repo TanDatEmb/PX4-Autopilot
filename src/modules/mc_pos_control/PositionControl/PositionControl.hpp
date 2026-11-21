@@ -39,6 +39,7 @@
 
 #pragma once
 
+#include <lib/cp_brake/SetpointLimiter.hpp>
 #include <lib/mathlib/mathlib.h>
 #include <matrix/matrix/math.hpp>
 #include <uORB/topics/trajectory_setpoint.h>
@@ -50,6 +51,19 @@ struct PositionControlStates {
 	matrix::Vector3f velocity;
 	matrix::Vector3f acceleration;
 	float yaw;
+};
+
+/**
+ * What the collision prevention limiter hook did in the last call of PositionControl::update():
+ * its result and the horizontal setpoints before and after it, in local NED. For the status.
+ */
+struct CollisionLimiterRecord {
+	cp_brake::HookResult result{cp_brake::HookAction::kTransparent, 0U, cp_brake::kNoSector};
+	float vel_sp_in_m_s[2] {};
+	float vel_sp_out_m_s[2] {};
+	float acc_sp_in_m_s2[2] {};
+	float acc_sp_out_m_s2[2] {};
+	float vel_m_s[2] {};
 };
 
 /**
@@ -158,6 +172,19 @@ public:
 	bool update(const float dt);
 
 	/**
+	 * Give the limiter hook its inputs (collision-prevention ICD-CP-04, OPEN-035). The hook runs in
+	 * update() between the position and the velocity control and is a pure function of these inputs
+	 * and the setpoint, so every call of update() with the same inputs gives the same result. The
+	 * default is a disabled hook, which leaves the controller exactly as it was.
+	 * @param context where and when the hook runs (CPB_EN, flight phase, navigation state, time)
+	 * @param constraint the latest cp_brake_constraints
+	 */
+	void setCollisionLimiter(const cp_brake::HookContext &context, const cp_brake::HookConstraint &constraint);
+
+	/** What the hook did in the last call of update(). */
+	const CollisionLimiterRecord &collisionLimiterRecord() const { return _limiter_record; }
+
+	/**
 	 * Set the integral term in xy to 0.
 	 * @see _vel_int
 	 */
@@ -198,6 +225,7 @@ private:
 	bool _inputValid();
 
 	void _positionControl(); ///< Position proportional control
+	void _applyCollisionLimiter(); ///< Directional caps of cp_brake on the horizontal setpoint
 	void _velocityControl(const float dt); ///< Velocity PID control
 	void _accelerationControl(); ///< Acceleration setpoint processing
 
@@ -233,4 +261,9 @@ private:
 	matrix::Vector3f _thr_sp; /**< desired thrust */
 	float _yaw_sp{}; /**< desired heading */
 	float _yawspeed_sp{}; /** desired yaw-speed */
+
+	// Collision prevention limiter hook
+	cp_brake::HookContext _limiter_context{};
+	cp_brake::HookConstraint _limiter_constraint{};
+	CollisionLimiterRecord _limiter_record{};
 };

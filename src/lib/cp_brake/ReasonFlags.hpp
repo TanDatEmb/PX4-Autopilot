@@ -62,6 +62,12 @@ constexpr uint32_t kReasonAckRequired{1U << 7};
 constexpr uint32_t kReasonOverride{1U << 8};
 /** The time alignment of the latest map is not good: the map is not used, its sectors are unknown. */
 constexpr uint32_t kReasonTimeSync{1U << 9};
+/** The hook found no constraint, one older than CPB_CSTR_AGE, or no usable age limit: no evidence of free space. */
+constexpr uint32_t kReasonConstraintStale{1U << 10};
+/** The hook found a malformed constraint: a heading that is not a number, or an enforced state it cannot map. */
+constexpr uint32_t kReasonConstraintMalformed{1U << 11};
+/** The hook is transparent because the navigation state is neither Position nor Mission. */
+constexpr uint32_t kReasonNavState{1U << 12};
 
 /** The reasons that make the caps unusable as a whole (no evidence of free space). */
 constexpr uint32_t kReasonConstraintFaults{kReasonInvalidConfig | kReasonFrameInvalid | kReasonDataInvalid
