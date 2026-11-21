@@ -141,6 +141,7 @@ void CpBrake::updateConfig()
 	_config.stock_cp_dist_m = _param_cp_dist.get();
 	_config.mpc_xy_vel_max_m_s = _param_mpc_xy_vel_max.get();
 	_config.second_obstacle_source = second_source;
+	_config.decel_bound_m_s2 = _param_cpb_decel_max.get();
 
 	// the history of the heading of the sample time: a changed depth or gap limit starts it again, an
 	// unrelated parameter update does not (it would leave no heading for the next second)

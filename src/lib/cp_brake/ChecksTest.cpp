@@ -68,6 +68,7 @@ ConfigInputs validConfig()
 	c.time_sync_limits = TimeSyncLimits{0.25f, 0.125f, 0.5f};
 	c.time_sync_enabled = true;
 	c.time_sync_required = true;
+	c.decel_bound_m_s2 = 3.f;
 	return c;
 }
 
@@ -203,6 +204,46 @@ TEST(ConfigCheckTest, HardwareWithoutTheUxrceTimeSyncIsAFaultAndSimulationIsNot)
 	c.time_sync_enabled = true;
 	c.time_sync_required = true;
 	EXPECT_EQ(checkConfig(c), 0U);
+}
+
+TEST(ConfigCheckTest, TheDecelerationBoundSentinelIsAFault)
+{
+	// ADR 0020 D4: the upper bound of the horizontal deceleration has no approved value, so it holds a sentinel
+	ConfigInputs c = validConfig();
+	c.decel_bound_m_s2 = -1.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kDecelBound);
+
+	c = validConfig();
+	c.decel_bound_m_s2 = 0.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kDecelBound);
+
+	c = validConfig();
+	c.decel_bound_m_s2 = std::numeric_limits<float>::quiet_NaN();
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kDecelBound);
+
+	c = validConfig();
+	c.decel_bound_m_s2 = std::numeric_limits<float>::infinity();
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kDecelBound);
+}
+
+TEST(ConfigCheckTest, TheDecelerationBoundIsNotBelowTheBrakingAcceleration)
+{
+	// ADR 0020 D4: no smaller than the braking acceleration of the model; equal is allowed
+	ConfigInputs c = validConfig();
+	c.decel_bound_m_s2 = c.stopping.a_brake_m_s2;
+	EXPECT_EQ(checkConfig(c), 0U);
+
+	c.decel_bound_m_s2 = std::nextafter(c.stopping.a_brake_m_s2, 0.f);
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kDecelBound);
+}
+
+TEST(ConfigCheckTest, TheDecelerationBoundIsRequiredEvenWhereTheGateIsNotUsed)
+{
+	ConfigInputs c = validConfig();
+	c.time_sync_enabled = false;
+	c.time_sync_required = false;
+	c.decel_bound_m_s2 = -1.f;
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kDecelBound);
 }
 
 TEST(InputCheckTest, AnInterfaceConformingInputIsValid)

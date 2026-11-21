@@ -71,6 +71,22 @@ PARAM_DEFINE_FLOAT(CPB_MAX_V, 12.f);
 PARAM_DEFINE_FLOAT(CPB_A_BRK, 3.f);
 
 /**
+ * Upper bound of the horizontal deceleration
+ *
+ * Used to allow for a vehicle that slowed down between the sample time of a map and its use (the
+ * distance moved since the sample, ADR 0020 D4). No smaller than the braking acceleration of the
+ * model (CPB_A_BRK). No approved value yet: -1 means not set, and cp_brake reports an invalid
+ * configuration instead of running.
+ *
+ * @unit m/s^2
+ * @min -1
+ * @max 20
+ * @decimal 1
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_DECEL_MAX, -1.f);
+
+/**
  * Braking jerk of the stopping model
  *
  * Reference used by the model. Design baseline (PERF-02).

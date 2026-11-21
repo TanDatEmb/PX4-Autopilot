@@ -177,6 +177,7 @@ private:
 		(ParamInt<px4::params::CPB_EN>) _param_cpb_en,
 		(ParamFloat<px4::params::CPB_MAX_V>) _param_cpb_max_v,
 		(ParamFloat<px4::params::CPB_A_BRK>) _param_cpb_a_brk,
+		(ParamFloat<px4::params::CPB_DECEL_MAX>) _param_cpb_decel_max,
 		(ParamFloat<px4::params::CPB_JERK>) _param_cpb_jerk,
 		(ParamFloat<px4::params::CPB_T_LAT>) _param_cpb_t_lat,
 		(ParamFloat<px4::params::CPB_MARGIN>) _param_cpb_margin,

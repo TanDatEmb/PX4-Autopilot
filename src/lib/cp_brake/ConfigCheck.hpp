@@ -63,6 +63,7 @@ struct ConfigInputs {
 	TimeSyncLimits time_sync_limits;  ///< limits of the time-alignment gate (OPEN-033)
 	bool time_sync_enabled;           ///< UXRCE_DDS_SYNCT is on, so timesync_status exists
 	bool time_sync_required;          ///< this build is a hardware one: ADR 0003 requires UXRCE_DDS_SYNCT=1
+	float decel_bound_m_s2;           ///< CPB_DECEL_MAX [m/s^2]: bound of the horizontal deceleration (ADR 0020 D4), > 0, not below the braking acceleration
 };
 
 namespace ConfigFaults
@@ -77,6 +78,7 @@ constexpr uint32_t kSecondObstacleSource{1U << 6};
 constexpr uint32_t kHeadingHistory{1U << 7};
 constexpr uint32_t kTimeSyncLimits{1U << 8};
 constexpr uint32_t kTimeSyncDisabled{1U << 9};
+constexpr uint32_t kDecelBound{1U << 10};
 } // namespace ConfigFaults
 
 /** Bit set of ConfigFaults; 0 means the configuration is valid. */
