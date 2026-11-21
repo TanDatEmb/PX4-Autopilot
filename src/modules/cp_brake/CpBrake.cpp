@@ -218,8 +218,12 @@ void CpBrake::processHeadingAndTimeSync()
 	vehicle_local_position_s local_position;
 
 	if (_local_position_sub.update(&local_position)) {
-		_px4_state_valid = local_position.xy_valid && local_position.v_xy_valid
-				   && local_position.heading_good_for_control;
+		// a velocity that is not a number is an invalid estimate, not "did not move" (ADR 0020 D4)
+		_velocity_valid = local_position.v_xy_valid && std::isfinite(local_position.vx)
+				  && std::isfinite(local_position.vy);
+		_velocity_north_m_s = local_position.vx;
+		_velocity_east_m_s = local_position.vy;
+		_px4_state_valid = local_position.xy_valid && _velocity_valid && local_position.heading_good_for_control;
 
 		// keyed by the sample time of the estimate, not by the time it was published
 		if (_heading_history.add(local_position.timestamp_sample, local_position.heading,
@@ -280,11 +284,16 @@ void CpBrake::process(const obstacle_distance_s &input)
 	}
 
 	if (input_ok && _config_faults == 0U && _param_cpb_en.get() == 1) {
-		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
-			const uint16_t wire = input.distances[i];
-			_raw_caps[i] = cp_brake::sectorSpeedCap(wire, input.min_distance, input.max_distance, 0.f, _config.stopping);
-			_sector_valid[i] = (wire != UINT16_MAX);
-		}
+		// the usable range is the measured range minus the distance moved toward the sector since the
+		// sample time (ADR 0020 D4): the age is taken now, and the heading is the one of the sample time
+		const hrt_abstime now = hrt_absolute_time();
+		const cp_brake::HeadingResult heading = _heading_history.at(input.timestamp);
+		const cp_brake::TravelInputs travel{_velocity_valid, _velocity_north_m_s, _velocity_east_m_s,
+						    heading.valid(), heading.heading_rad,
+						    static_cast<float>(static_cast<int64_t>(now) - static_cast<int64_t>(input.timestamp)) * 1e-6f,
+						    _config.decel_bound_m_s2};
+		_map_travel_usable = cp_brake::rawSectorCaps(input.distances, input.min_distance, input.max_distance, travel,
+				     _config.stopping, _raw_caps, _sector_valid);
 
 		if (!_time_sync_good) {
 			// a map whose time alignment is not good is not used: every sector is unknown, never free
@@ -443,6 +452,8 @@ int CpBrake::print_status()
 		 static_cast<unsigned>(_heading_history.size()), static_cast<unsigned>(_heading_sample_count),
 		 static_cast<unsigned>(_heading_rejected_count), static_cast<int>(_heading_history.params().depth),
 		 static_cast<double>(_heading_history.params().max_gap_s), static_cast<unsigned>(_heading_lookup));
+	PX4_INFO("velocity valid: %d, latest map had a usable travelled distance: %d",
+		 static_cast<int>(_velocity_valid), static_cast<int>(_map_travel_usable));
 	PX4_INFO("time sync gate: %s, verdict: %u, maps not used: %u, map time good: %d",
 		 _time_sync_enabled ? "on" : "off (UXRCE_DDS_SYNCT=0)", static_cast<unsigned>(_time_sync_verdict),
 		 static_cast<unsigned>(_time_sync_rejected_count), static_cast<int>(_time_sync_good));

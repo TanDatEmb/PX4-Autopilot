@@ -242,6 +242,22 @@ TEST(RawSectorCapsTest, ALargeAgeTakesTheWholeRangeEvenOfAClearSector)
 	EXPECT_TRUE(valid[0]);              // known, but with no usable range
 }
 
+TEST(RawSectorCapsTest, AnAgeSoLargeThatTheDistanceOverflowsStillTakesTheWholeRange)
+{
+	// the stopping model reads a non-finite distance as 0, so the distance must stay a finite number
+	Map map(kClearCm);
+	SectorCaps caps{};
+	SectorFlags valid{};
+
+	const float huge = 1e30f;
+	EXPECT_TRUE(std::isfinite(travelledTowardSector(inputs(4.f, 0.f, huge), 0)));
+	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(4.f, 0.f, huge), fixtureStopping(), caps, valid));
+
+	for (std::size_t i = 0; i < kSectorCount; ++i) {
+		EXPECT_NEAR(caps[i], 0.f, 1e-9f) << i;
+	}
+}
+
 TEST(RawSectorCapsTest, AZeroAgeAndAStationaryVehicleChangeNothing)
 {
 	Map map(1000U);

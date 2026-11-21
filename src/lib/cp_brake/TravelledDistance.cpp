@@ -33,26 +33,57 @@
 
 #include "TravelledDistance.hpp"
 
+#include <float.h>
+#include <cmath>
+#include <math.h>
+
 namespace cp_brake
 {
 
-// Red step: this stub is today's behaviour (distance 0, every input usable). The implementation
-// follows in the next commit.
-bool isUsable(const TravelInputs &inputs)
+namespace
 {
-	return true;
+constexpr double kSectorRad{3.14159265358979323846 / 36.0};   // 5 degrees, clockwise from forward
 }
 
-float travelledTowardSector(const TravelInputs &inputs, std::size_t sector)
+bool isUsable(const TravelInputs &in)
 {
-	return 0.f;
+	return in.velocity_valid && std::isfinite(in.v_north_m_s) && std::isfinite(in.v_east_m_s)
+	       && in.heading_valid && std::isfinite(in.heading_rad)
+	       && std::isfinite(in.age_s) && in.age_s >= 0.f
+	       && std::isfinite(in.decel_bound_m_s2) && in.decel_bound_m_s2 > 0.f;
+}
+
+float travelledTowardSector(const TravelInputs &in, std::size_t sector)
+{
+	if (!isUsable(in) || sector >= kSectorCount) {
+		return NAN;
+	}
+
+	// u_i in local NED: the bearing of the sector at the heading of the sample, clockwise from north
+	const double bearing = static_cast<double>(in.heading_rad) + static_cast<double>(sector) * kSectorRad;
+	const double toward = static_cast<double>(in.v_north_m_s) * cos(bearing)
+			      + static_cast<double>(in.v_east_m_s) * sin(bearing);
+	const double age = static_cast<double>(in.age_s);
+	const double moved = (toward > 0.0 ? toward : 0.0) * age
+			     + 0.5 * static_cast<double>(in.decel_bound_m_s2) * age * age;
+
+	// a finite float that the model reads as "more than the whole range", never a value it would
+	// read as 0 (sectorSpeedCap ignores a non-finite distance)
+	return (moved > static_cast<double>(FLT_MAX)) ? FLT_MAX : static_cast<float>(moved);
 }
 
 bool rawSectorCaps(const uint16_t *wire_cm, uint16_t min_cm, uint16_t max_cm, const TravelInputs &inputs,
 		   const StoppingParams &stopping, SectorCaps &caps, SectorFlags &valid)
 {
+	if (!isUsable(inputs)) {
+		// no usable travelled distance: the map is not used, never read as "did not move"
+		caps.fill(0.f);
+		valid.fill(false);
+		return false;
+	}
+
 	for (std::size_t i = 0; i < kSectorCount; ++i) {
-		caps[i] = sectorSpeedCap(wire_cm[i], min_cm, max_cm, 0.f, stopping);
+		caps[i] = sectorSpeedCap(wire_cm[i], min_cm, max_cm, travelledTowardSector(inputs, i), stopping);
 		valid[i] = (wire_cm[i] != UINT16_MAX);
 	}
 
