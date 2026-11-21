@@ -301,14 +301,47 @@ void CpBrake::process(const obstacle_distance_s &input)
 			_sector_valid.fill(false);
 		}
 
+		// keep the map for the evaluations until the next one (see tightenHeldMap)
+		_held_usable = _time_sync_good;
+		_held_min_cm = input.min_distance;
+		_held_max_cm = input.max_distance;
+		_held_timestamp = input.timestamp;
+
+		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
+			_held_distances_cm[i] = input.distances[i];
+		}
+
 		// a gap longer than the sample age limit, or an unused map before this one, gave no supporting
 		// data: no step, so the limiter only tightens and its dwell starts again
 		_limiter.update(_raw_caps, _sector_valid, step_s);
 	}
 }
 
+void CpBrake::tightenHeldMap()
+{
+	if (!_held_usable || _config_faults != 0U || _param_cpb_en.get() != 1) {
+		return;
+	}
+
+	// the caps of the latest map, with the age and the velocity of now: between two maps the vehicle moves
+	// on, and a cap computed when the map came would still allow the range it has already used. Only a
+	// tightening is applied here; a cap rises only at a map, after its dwell (CapLimiter).
+	const hrt_abstime now = hrt_absolute_time();
+	const cp_brake::HeadingResult heading = _heading_history.at(_held_timestamp);
+	const cp_brake::TravelInputs travel{_velocity_valid, _velocity_north_m_s, _velocity_east_m_s,
+					    heading.valid(), heading.heading_rad,
+					    static_cast<float>(static_cast<int64_t>(now) - static_cast<int64_t>(_held_timestamp)) * 1e-6f,
+					    _config.decel_bound_m_s2};
+	cp_brake::SectorCaps caps;
+	cp_brake::SectorFlags valid;
+	cp_brake::rawSectorCaps(_held_distances_cm, _held_min_cm, _held_max_cm, travel, _config.stopping, caps, valid);
+	_limiter.tighten(caps);
+}
+
 void CpBrake::evaluate()
 {
+	tightenHeldMap();
+
 	const hrt_abstime now = hrt_absolute_time();
 	const uint64_t sample_timestamp = _map_timeline.sampleTimestamp();
 	const bool has_sample = (sample_timestamp != 0U);

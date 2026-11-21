@@ -122,6 +122,7 @@ private:
 	void processHeadingAndTimeSync();
 	void process(const obstacle_distance_s &input);
 	void evaluate();
+	void tightenHeldMap();
 
 	uORB::Publication<cp_brake_constraints_s> _constraints_pub{ORB_ID(cp_brake_constraints)};
 	uORB::Publication<cp_brake_status_s> _status_pub{ORB_ID(cp_brake_status)};
@@ -154,6 +155,13 @@ private:
 	bool _velocity_valid{false};           ///< v_xy_valid and both components finite
 	float _velocity_north_m_s{0.f};
 	float _velocity_east_m_s{0.f};
+	// the latest map that was used, kept so that its caps can be recomputed at every evaluation: the vehicle moves
+	// on between maps and the usable range falls with the distance moved since the sample (ADR 0020 D4)
+	uint16_t _held_distances_cm[cp_brake::kSectorCount] {};
+	uint16_t _held_min_cm{0};
+	uint16_t _held_max_cm{0};
+	uint64_t _held_timestamp{0};
+	bool _held_usable{false};
 	bool _map_travel_usable{false};        ///< the latest map had a usable travelled distance (else it is unknown)
 
 	// heading of the sample time (issue #94, ADR 0019)
