@@ -72,6 +72,7 @@ StateInputs healthy()
 	in.sample_age_s = 0.1f;
 	in.sample_age_stop_s = kAgeStop_s;
 	in.heading_valid = true;
+	in.heading_warming_up = false;
 	in.time_sync_good = true;
 	in.px4_state_valid = true;
 	in.takeoff_state = kTakeoffStateFlight;
@@ -252,6 +253,82 @@ TEST(StateMachineTest, InFlightALimitingCapIsBraking)
 	const StateResult out = evaluateState(in);
 	EXPECT_STATE(out, kStateBraking);
 	EXPECT_EQ(out.reason_flags, 0U);
+	EXPECT_FALSE(out.safe_stop_latched);
+}
+
+// ADR 0020 D5, issue #112: the warm-up of the heading history is NOT_READY and never a latch.
+TEST(StateMachineTest, InFlightAMapSampledBeforeTheFirstHeadingSampleIsNotReadyAndNotLatched)
+{
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_warming_up = true;
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateNotReady);
+	EXPECT_NE(out.reason_flags & kReasonHeadingWarmUp, 0U);
+	EXPECT_EQ(out.reason_flags & kReasonNoHeading, 0U);
+	EXPECT_EQ(out.reason_flags & kReasonAckRequired, 0U);
+	EXPECT_FALSE(out.safe_stop_latched);
+	EXPECT_FALSE(isEnforcingState(out.state)); // the hook takes no action while the heading warms up
+}
+
+TEST(StateMachineTest, TheWarmUpEndsInActiveClearWithoutAnAcknowledgement)
+{
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_warming_up = true;
+	StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateNotReady);
+	in.heading_valid = true;
+	in.heading_warming_up = false;
+	out = step(in, out);
+	EXPECT_STATE(out, kStateActiveClear);
+	EXPECT_EQ(out.reason_flags, 0U);
+}
+
+TEST(StateMachineTest, AHeadingFailureThatIsNotAWarmUpStillLatchesASafeStop)
+{
+	// a gap, a reset or a sample not good for control: not kBeforeFirst, so heading_warming_up is false
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_warming_up = false;
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateSafeStop);
+	EXPECT_NE(out.reason_flags & kReasonNoHeading, 0U);
+	EXPECT_TRUE(out.safe_stop_latched);
+}
+
+TEST(StateMachineTest, AWarmUpDoesNotClearALatchedSafeStopEvenWithTheAcknowledgement)
+{
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_warming_up = false;
+	StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateSafeStop);
+	in.heading_warming_up = true;
+	in.pilot_ack = true;
+	out = step(in, out);
+	EXPECT_STATE(out, kStateSafeStop);
+	EXPECT_TRUE(out.safe_stop_latched);
+}
+
+TEST(StateMachineTest, AWarmUpThatCannotCompleteEndsInTheStaleSafeStop)
+{
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_warming_up = true;
+	in.sample_age_s = kAgeStop_s + 0.01f; // the map aged past CPB_AGE_STOP while the history never caught up
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateSafeStop);
+	EXPECT_NE(out.reason_flags & kReasonSampleStale, 0U);
+}
+
+TEST(StateMachineTest, BeforeFlightAWarmUpIsNotReadyAndNeverASafeStop)
+{
+	StateInputs in = healthyOnGround();
+	in.heading_valid = false;
+	in.heading_warming_up = true;
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateNotReady);
 	EXPECT_FALSE(out.safe_stop_latched);
 }
 

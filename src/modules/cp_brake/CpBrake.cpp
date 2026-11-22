@@ -56,6 +56,7 @@ static_assert(cp_brake::kReasonTimeSync == cp_brake_constraints_s::REASON_TIME_S
 static_assert(cp_brake::kReasonConstraintStale == cp_brake_constraints_s::REASON_CONSTRAINT_STALE, "reason flag");
 static_assert(cp_brake::kReasonConstraintMalformed == cp_brake_constraints_s::REASON_CONSTRAINT_MALFORMED, "reason flag");
 static_assert(cp_brake::kReasonNavState == cp_brake_constraints_s::REASON_NAV_STATE, "reason flag");
+static_assert(cp_brake::kReasonHeadingWarmUp == cp_brake_constraints_s::REASON_HEADING_WARMUP, "reason flag");
 static_assert(cp_brake::kStateDisabled == cp_brake_constraints_s::STATE_DISABLED, "state");
 static_assert(cp_brake::kStateObserverOnly == cp_brake_constraints_s::STATE_OBSERVER_ONLY, "state");
 static_assert(cp_brake::kStateNotReady == cp_brake_constraints_s::STATE_NOT_READY, "state");
@@ -74,6 +75,7 @@ CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kAfterLast, cp_brake_status_s::HEAD
 CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kReset, cp_brake_status_s::HEADING_LOOKUP_RESET);
 CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kGap, cp_brake_status_s::HEADING_LOOKUP_GAP);
 CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kNotGood, cp_brake_status_s::HEADING_LOOKUP_NOT_GOOD);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kNotYetGood, cp_brake_status_s::HEADING_LOOKUP_NOT_YET_GOOD);
 CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kGood, cp_brake_status_s::TIME_SYNC_GOOD);
 CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kInvalidLimits, cp_brake_status_s::TIME_SYNC_INVALID_LIMITS);
 CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kNoStatus, cp_brake_status_s::TIME_SYNC_NO_STATUS);
@@ -377,6 +379,8 @@ void CpBrake::evaluate()
 	inputs.sample_age_s = sample_age_s;
 	inputs.sample_age_stop_s = _config.sample_age_stop_s;
 	inputs.heading_valid = heading.valid();
+	inputs.heading_warming_up = (heading.lookup == cp_brake::HeadingLookup::kBeforeFirst
+				     || heading.lookup == cp_brake::HeadingLookup::kNotYetGood);
 	inputs.time_sync_good = _time_sync_good;
 	inputs.px4_state_valid = _px4_state_valid;
 	inputs.takeoff_state = _takeoff_state;

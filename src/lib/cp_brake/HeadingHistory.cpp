@@ -113,6 +113,26 @@ bool HeadingHistory::add(uint64_t time_us, float heading_rad, uint8_t reset_coun
 	return true;
 }
 
+HeadingResult HeadingHistory::notGood(uint64_t time_us) const
+{
+	// The map is sampled about 0.1 s before it is evaluated, so when the heading becomes good for control (after
+	// take-off, or after a dropout) the first maps still point at samples that were not good: a warm-up, not a
+	// failure (issue #112, ADR 0020 D5). The start of the unbroken run of good samples ending at the newest sample
+	// tells it. While the newest sample is not good the heading is invalid now and the lookup stays kNotGood.
+	if (!newest(0U).good) {
+		return HeadingResult{HeadingLookup::kNotGood, 0.f};
+	}
+
+	std::size_t i = 0U;
+
+	while (i + 1U < _count && newest(i + 1U).good) {
+		++i;
+	}
+
+	return time_us < newest(i).time_us ? HeadingResult{HeadingLookup::kNotYetGood, 0.f}
+	       : HeadingResult{HeadingLookup::kNotGood, 0.f};
+}
+
 HeadingResult HeadingHistory::at(uint64_t time_us) const
 {
 	if (!isValid(_params)) {
@@ -142,15 +162,14 @@ HeadingResult HeadingHistory::at(uint64_t time_us) const
 
 	if (earlier.time_us == time_us) {
 		// the exact time of a sample needs no neighbour
-		return earlier.good ? HeadingResult{HeadingLookup::kOk, earlier.heading_rad}
-		       : HeadingResult{HeadingLookup::kNotGood, 0.f};
+		return earlier.good ? HeadingResult{HeadingLookup::kOk, earlier.heading_rad} : notGood(time_us);
 	}
 
 	// the time is strictly inside: i > 0, because the newest sample is not before the time
 	const Sample &later = newest(i - 1U);
 
 	if (!earlier.good || !later.good) {
-		return HeadingResult{HeadingLookup::kNotGood, 0.f};
+		return notGood(time_us);
 	}
 
 	if (earlier.reset_counter != later.reset_counter) {

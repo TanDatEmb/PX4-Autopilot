@@ -31,3 +31,4 @@ uint32 REASON_TIME_SYNC = 512		# the time alignment of the latest map is not goo
 uint32 REASON_CONSTRAINT_STALE = 1024	# set by the hook: no constraint, one older than CPB_CSTR_AGE, or no usable age limit
 uint32 REASON_CONSTRAINT_MALFORMED = 2048	# set by the hook: a heading that is not a number, or an enforced state it cannot map
 uint32 REASON_NAV_STATE = 4096		# set by the hook: transparent, the navigation state is neither Position nor Mission
+uint32 REASON_HEADING_WARMUP = 8192	# the map was sampled before the first heading sample: NOT_READY, no latch (ADR 0020 D5)

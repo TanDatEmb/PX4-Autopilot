@@ -94,7 +94,8 @@ enum class HeadingLookup : uint8_t {
 	kAfterLast = 4,      ///< the time is newer than the newest sample: no extrapolation
 	kReset = 5,          ///< the reset counter changed between the samples around the time
 	kGap = 6,            ///< the samples around the time are further apart than the gap limit
-	kNotGood = 7         ///< a sample at or around the time was not good for control, or not finite
+	kNotGood = 7,        ///< a sample at or around the time was not good for control, or not finite
+	kNotYetGood = 8      ///< as kNotGood, but the heading has been good for control since after the time: a warm-up
 };
 
 struct HeadingResult {
@@ -139,6 +140,10 @@ private:
 
 	/** The i-th newest sample, 0 being the newest. */
 	const Sample &newest(std::size_t i) const;
+
+	/** kNotYetGood when the newest samples are good and the time precedes their run (the heading became good
+	 *  after the time: a warm-up, ADR 0020 D5), else kNotGood. */
+	HeadingResult notGood(uint64_t time_us) const;
 
 	HeadingHistoryParams _params;
 	Sample _samples[kHeadingHistoryCapacity] {};

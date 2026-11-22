@@ -293,11 +293,60 @@ TEST(HeadingHistoryTest, ASampleNotGoodForControlBlocksTheInterpolationAroundIt)
 	ASSERT_TRUE(history.add(kT0_us + 1U * kStep_us, 0.1f, 0U, false));
 	ASSERT_TRUE(history.add(kT0_us + 2U * kStep_us, 0.1f, 0U, true));
 
-	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotGood);
-	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotGood);
-	EXPECT_LOOKUP(history.at(kT0_us + kStep_us), HeadingLookup::kNotGood);
+	// the dropout has recovered: the times around it are a warm-up (issue #112), never a heading
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us), HeadingLookup::kNotYetGood);
 	EXPECT_TRUE(history.at(kT0_us).valid());
 	EXPECT_TRUE(history.at(kT0_us + 2U * kStep_us).valid());
+}
+
+// Issue #112: the heading is not good for control until the estimator aligns it, some seconds after take-off,
+// and a map is sampled about 0.1 s before it is evaluated.
+TEST(HeadingHistoryTest, BeforeTheCurrentRunOfGoodSamplesTheLookupIsAWarmUpNotAFailure)
+{
+	HeadingHistory history(fixtureParams());
+	ASSERT_TRUE(history.add(kT0_us + 0U * kStep_us, 0.1f, 0U, false));
+	ASSERT_TRUE(history.add(kT0_us + 1U * kStep_us, 0.1f, 0U, false));
+	ASSERT_TRUE(history.add(kT0_us + 2U * kStep_us, 0.1f, 0U, true));
+	ASSERT_TRUE(history.add(kT0_us + 3U * kStep_us, 0.1f, 0U, true));
+
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us), HeadingLookup::kNotYetGood);
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotYetGood);  // between not good and good
+	EXPECT_TRUE(history.at(kT0_us + 2U * kStep_us).valid());
+	EXPECT_TRUE(history.at(kT0_us + 2U * kStep_us + kStep_us / 2U).valid());
+}
+
+TEST(HeadingHistoryTest, ADropoutThatHasRecoveredIsAWarmUpAndOneThatIsStillOnStaysAFailure)
+{
+	HeadingHistory history(fixtureParams());
+	ASSERT_TRUE(history.add(kT0_us + 0U * kStep_us, 0.1f, 0U, true));
+	ASSERT_TRUE(history.add(kT0_us + 1U * kStep_us, 0.1f, 0U, false));
+	ASSERT_TRUE(history.add(kT0_us + 2U * kStep_us, 0.1f, 0U, false));
+	// the newest sample is not good: the heading is invalid now
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotGood);
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotGood);
+
+	ASSERT_TRUE(history.add(kT0_us + 3U * kStep_us, 0.1f, 0U, true));
+	// it recovered: the maps sampled during the dropout are a warm-up now
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
+	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
+	EXPECT_LOOKUP(history.at(kT0_us + 2U * kStep_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
+	EXPECT_TRUE(history.at(kT0_us).valid());
+}
+
+TEST(HeadingHistoryTest, AGapAndAResetAreStillFailuresInsideTheRunOfGoodSamples)
+{
+	HeadingHistory gap(fixtureParams());
+	ASSERT_TRUE(gap.add(kT0_us, 0.f, 0U, true));
+	ASSERT_TRUE(gap.add(kT0_us + 100U * kStep_us, 0.f, 0U, true));
+	EXPECT_LOOKUP(gap.at(kT0_us + 50U * kStep_us), HeadingLookup::kGap);
+
+	HeadingHistory reset(fixtureParams());
+	ASSERT_TRUE(reset.add(kT0_us, 0.f, 5U, true));
+	ASSERT_TRUE(reset.add(kT0_us + kStep_us, 0.f, 6U, true));
+	EXPECT_LOOKUP(reset.at(kT0_us + kStep_us / 2U), HeadingLookup::kReset);
 }
 
 TEST(HeadingHistoryTest, ANonFiniteHeadingIsNeverUsed)
@@ -308,10 +357,10 @@ TEST(HeadingHistoryTest, ANonFiniteHeadingIsNeverUsed)
 	ASSERT_TRUE(history.add(kT0_us + 2U * kStep_us, std::numeric_limits<float>::infinity(), 0U, true));
 	ASSERT_TRUE(history.add(kT0_us + 3U * kStep_us, 0.1f, 0U, true));
 
-	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotGood);
-	EXPECT_LOOKUP(history.at(kT0_us + kStep_us), HeadingLookup::kNotGood);
-	EXPECT_LOOKUP(history.at(kT0_us + 2U * kStep_us), HeadingLookup::kNotGood);
-	EXPECT_LOOKUP(history.at(kT0_us + 2U * kStep_us + kStep_us / 2U), HeadingLookup::kNotGood);
+	EXPECT_FALSE(history.at(kT0_us + kStep_us / 2U).valid());
+	EXPECT_FALSE(history.at(kT0_us + kStep_us).valid());
+	EXPECT_FALSE(history.at(kT0_us + 2U * kStep_us).valid());
+	EXPECT_FALSE(history.at(kT0_us + 2U * kStep_us + kStep_us / 2U).valid());
 }
 
 TEST(HeadingHistoryTest, AGapLongerThanTheLimitBlocksTheInterpolationAcrossIt)
