@@ -72,6 +72,7 @@ StateInputs healthy()
 	in.sample_age_s = 0.1f;
 	in.sample_age_stop_s = kAgeStop_s;
 	in.heading_valid = true;
+	in.heading_not_yet_good = false;
 	in.time_sync_good = true;
 	in.px4_state_valid = true;
 	in.takeoff_state = kTakeoffStateFlight;
@@ -253,6 +254,63 @@ TEST(StateMachineTest, InFlightALimitingCapIsBraking)
 	EXPECT_STATE(out, kStateBraking);
 	EXPECT_EQ(out.reason_flags, 0U);
 	EXPECT_FALSE(out.safe_stop_latched);
+}
+
+// Issue #112: a heading that became good only after the map was sampled is not qualified yet, never a latch.
+TEST(StateMachineTest, AHeadingThatIsNotYetGoodIsUnqualifiedNotLatched)
+{
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_not_yet_good = true;
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateNotReady);
+	EXPECT_NE(out.reason_flags & kReasonUnqualified, 0U);
+	EXPECT_FALSE(out.safe_stop_latched);
+	EXPECT_FALSE(isEnforcingState(out.state));
+}
+
+TEST(StateMachineTest, TheNotYetGoodHeadingEndsInActiveClearWithoutAnAcknowledgement)
+{
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_not_yet_good = true;
+	StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateNotReady);
+	in.heading_valid = true;
+	in.heading_not_yet_good = false;
+	out = step(in, out);
+	EXPECT_STATE(out, kStateActiveClear);
+}
+
+TEST(StateMachineTest, AStaleMapStillReachesTheSafeStopWhileTheHeadingIsNotYetGood)
+{
+	// the map stream stopped: the exemption must not keep the state NOT_READY past CPB_AGE_STOP (review of #10)
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_not_yet_good = true;
+	in.sample_age_s = kAgeStop_s;  // exactly the limit is stale (PERF-04)
+	StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateSafeStop);
+	EXPECT_NE(out.reason_flags & kReasonSampleStale, 0U);
+	EXPECT_TRUE(out.safe_stop_latched);
+
+	in.sample_age_s = kAgeStop_s * 0.99f;
+	out = evaluateState(in);
+	EXPECT_STATE(out, kStateNotReady);
+
+	in.has_sample = false;
+	out = evaluateState(in);
+	EXPECT_STATE(out, kStateSafeStop);
+}
+
+TEST(StateMachineTest, AHeadingFailureThatIsNotNotYetGoodStillLatchesASafeStop)
+{
+	StateInputs in = healthy();
+	in.heading_valid = false;
+	in.heading_not_yet_good = false;  // a gap, a reset, an evicted sample or a dropout that is still on
+	const StateResult out = evaluateState(in);
+	EXPECT_STATE(out, kStateSafeStop);
+	EXPECT_NE(out.reason_flags & kReasonNoHeading, 0U);
 }
 
 TEST(StateMachineTest, BrakingReleasesToActiveClearWhenNothingLimitsAnyMore)

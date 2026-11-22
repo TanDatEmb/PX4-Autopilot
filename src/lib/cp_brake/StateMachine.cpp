@@ -68,6 +68,11 @@ StateResult evaluateState(const StateInputs &in)
 
 	uint32_t reasons = in.input_flags & (kReasonFrameInvalid | kReasonDataInvalid);
 
+	// Issue #112: a heading that became good only after the map was sampled leaves the PX4 state not qualified yet,
+	// the existing UNQUALIFIED path (NOT_READY, nothing latched, PX4 failsafes act, ADR 0007). Never past the stale
+	// limit: a map stream that stopped must still reach the stale safe stop.
+	const bool qualified = in.px4_state_valid && !(in.heading_not_yet_good && !sampleIsStale(in));
+
 	if (in.config_faults != 0U) {
 		reasons |= kReasonInvalidConfig;
 	}
@@ -89,7 +94,7 @@ StateResult evaluateState(const StateInputs &in)
 		reasons |= kReasonTimeSync;
 	}
 
-	if (!in.px4_state_valid) {
+	if (!qualified) {
 		reasons |= kReasonUnqualified;
 	}
 
@@ -107,19 +112,19 @@ StateResult evaluateState(const StateInputs &in)
 	bool latched = in.safe_stop_latched;
 
 	// the only exit: the acknowledgement of this evaluation together with a revalidation of it
-	if (latched && in.pilot_ack && !faulted && in.px4_state_valid && in.time_sync_good) {
+	if (latched && in.pilot_ack && !faulted && qualified && in.time_sync_good) {
 		latched = false;
 	}
 
 	if (in.takeoff_state != kTakeoffStateFlight) {
 		// ADR 0009: nothing is enforced before TAKEOFF_STATE_FLIGHT, so no safe stop and no braking
-		out.state = (latched || faulted || !in.px4_state_valid || !in.time_sync_good) ? kStateNotReady
+		out.state = (latched || faulted || !qualified || !in.time_sync_good) ? kStateNotReady
 			    : kStateObserverOnly;
 
 	} else if (latched) {
 		out.state = kStateSafeStop;
 
-	} else if (!in.px4_state_valid) {
+	} else if (!qualified) {
 		out.state = kStateNotReady; // unqualified: CP adds no action, PX4 failsafes act (ADR 0007)
 
 	} else if (faulted) {

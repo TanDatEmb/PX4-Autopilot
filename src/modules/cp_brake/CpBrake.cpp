@@ -379,11 +379,8 @@ void CpBrake::evaluate()
 	inputs.sample_age_stop_s = _config.sample_age_stop_s;
 	inputs.heading_valid = heading.valid();
 	inputs.time_sync_good = _time_sync_good;
-	// The heading became good for control only after the map was sampled (kNotYetGood, issue #112): the claim is
-	// not qualified yet. UNQUALIFIED is the existing state for that (NOT_READY, no latch, PX4 failsafes act, ADR
-	// 0007). An evicted sample (kBeforeFirst), a gap, a reset and a dropout that is still on stay NO_HEADING and a
-	// safe stop.
-	inputs.px4_state_valid = _px4_state_valid && heading.lookup != cp_brake::HeadingLookup::kNotYetGood;
+	inputs.heading_not_yet_good = (heading.lookup == cp_brake::HeadingLookup::kNotYetGood); // issue #112
+	inputs.px4_state_valid = _px4_state_valid;
 	inputs.takeoff_state = _takeoff_state;
 	inputs.limiting = limiting;
 	inputs.blocked = !any_motion;

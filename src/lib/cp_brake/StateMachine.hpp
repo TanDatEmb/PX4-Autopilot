@@ -86,6 +86,7 @@ struct StateInputs {
 	float sample_age_s;          ///< age of the latest accepted map [s]; negative or non-finite is stale
 	float sample_age_stop_s;     ///< CPB_AGE_STOP [s]; a limit that is not a positive number is stale
 	bool heading_valid;          ///< the heading history gives a heading for the sample time
+	bool heading_not_yet_good;   ///< the lookup is HeadingLookup::kNotYetGood: the heading became good after the map was sampled (#112)
 	bool time_sync_good;         ///< the time alignment of the latest map passed the gate (issue #94)
 	bool px4_state_valid;        ///< the PX4 estimator and heading are valid; false gives UNQUALIFIED
 	uint8_t takeoff_state;       ///< takeoff_status.takeoff_state
