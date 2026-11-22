@@ -95,11 +95,8 @@ enum class HeadingLookup : uint8_t {
 	kReset = 5,          ///< the reset counter changed between the samples around the time
 	kGap = 6,            ///< the samples around the time are further apart than the gap limit
 	kNotGood = 7,        ///< a sample at or around the time was not good for control, or not finite
-	kNotYetGood = 8      ///< as kNotGood, but the heading has been good for control since after the time: a warm-up
+	kNotYetGood = 8      ///< as kNotGood, but the heading has been good for control since after the time (issue #112)
 };
-
-/** Only kNotYetGood is a warm-up (ADR 0020 D5): kBeforeFirst means the sample was evicted, which is a failure. */
-inline bool isWarmUp(HeadingLookup lookup) { return lookup == HeadingLookup::kNotYetGood; }
 
 struct HeadingResult {
 	HeadingLookup lookup;

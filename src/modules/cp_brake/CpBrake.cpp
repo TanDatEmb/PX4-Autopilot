@@ -56,7 +56,6 @@ static_assert(cp_brake::kReasonTimeSync == cp_brake_constraints_s::REASON_TIME_S
 static_assert(cp_brake::kReasonConstraintStale == cp_brake_constraints_s::REASON_CONSTRAINT_STALE, "reason flag");
 static_assert(cp_brake::kReasonConstraintMalformed == cp_brake_constraints_s::REASON_CONSTRAINT_MALFORMED, "reason flag");
 static_assert(cp_brake::kReasonNavState == cp_brake_constraints_s::REASON_NAV_STATE, "reason flag");
-static_assert(cp_brake::kReasonHeadingWarmUp == cp_brake_constraints_s::REASON_HEADING_WARMUP, "reason flag");
 static_assert(cp_brake::kStateDisabled == cp_brake_constraints_s::STATE_DISABLED, "state");
 static_assert(cp_brake::kStateObserverOnly == cp_brake_constraints_s::STATE_OBSERVER_ONLY, "state");
 static_assert(cp_brake::kStateNotReady == cp_brake_constraints_s::STATE_NOT_READY, "state");
@@ -379,12 +378,12 @@ void CpBrake::evaluate()
 	inputs.sample_age_s = sample_age_s;
 	inputs.sample_age_stop_s = _config.sample_age_stop_s;
 	inputs.heading_valid = heading.valid();
-	// the warm-up is the heading that became good after the map time; kBeforeFirst is not one (the sample was
-	// evicted, a failure), and the exemption ends CPB_AGE_STOP after it began, however fresh the maps are
-	inputs.heading_warming_up = _warm_up_bound.update(cp_brake::isWarmUp(heading.lookup),
-								 hrt_absolute_time(), _config.sample_age_stop_s);
 	inputs.time_sync_good = _time_sync_good;
-	inputs.px4_state_valid = _px4_state_valid;
+	// The heading became good for control only after the map was sampled (kNotYetGood, issue #112): the claim is
+	// not qualified yet. UNQUALIFIED is the existing state for that (NOT_READY, no latch, PX4 failsafes act, ADR
+	// 0007). An evicted sample (kBeforeFirst), a gap, a reset and a dropout that is still on stay NO_HEADING and a
+	// safe stop.
+	inputs.px4_state_valid = _px4_state_valid && heading.lookup != cp_brake::HeadingLookup::kNotYetGood;
 	inputs.takeoff_state = _takeoff_state;
 	inputs.limiting = limiting;
 	inputs.blocked = !any_motion;

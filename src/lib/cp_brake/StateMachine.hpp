@@ -51,12 +51,6 @@
  *   action of its own, so existing PX4 failsafes act (ADR 0007). Valid data gives ACTIVE_CLEAR, or
  *   BRAKING while a cap limits the speed. Persistent blockage stays BRAKING: there is no timer and
  *   no escalation. The module never requests a mode (ADR 0007).
- * - Heading warm-up (ADR 0020 D5, issue #112): a map whose sample time precedes the first sample of the heading
- *   history (HeadingLookup::kBeforeFirst) is not a warm-up: the sample was evicted, a failure. A map sampled before the
- *   heading became good for control (HeadingLookup::kNotYetGood: after take-off, or after a dropout) is NOT_READY
- *   with kReasonHeadingWarmUp and latches nothing, for at most CPB_AGE_STOP from the start of the warm-up
- *   (WarmUpBound). A gap, a reset, a dropout that is still on, an evicted sample or any other failure is
- *   NO_HEADING and a safe stop; a warm-up that cannot complete ends in the stale rule (the map ages past CPB_AGE_STOP).
  * - SAFE_STOP is a latch. It leaves only through the pilot acknowledgement together with a
  *   revalidation in the same evaluation, or through a pilot override. The acknowledgement is an
  *   event of this evaluation and is not remembered: an acknowledgement given while the data is
@@ -92,7 +86,6 @@ struct StateInputs {
 	float sample_age_s;          ///< age of the latest accepted map [s]; negative or non-finite is stale
 	float sample_age_stop_s;     ///< CPB_AGE_STOP [s]; a limit that is not a positive number is stale
 	bool heading_valid;          ///< the heading history gives a heading for the sample time
-	bool heading_warming_up;     ///< kNotYetGood and still inside the WarmUpBound limit, ADR 0020 D5
 	bool time_sync_good;         ///< the time alignment of the latest map passed the gate (issue #94)
 	bool px4_state_valid;        ///< the PX4 estimator and heading are valid; false gives UNQUALIFIED
 	uint8_t takeoff_state;       ///< takeoff_status.takeoff_state

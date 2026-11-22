@@ -293,7 +293,7 @@ TEST(HeadingHistoryTest, ASampleNotGoodForControlBlocksTheInterpolationAroundIt)
 	ASSERT_TRUE(history.add(kT0_us + 1U * kStep_us, 0.1f, 0U, false));
 	ASSERT_TRUE(history.add(kT0_us + 2U * kStep_us, 0.1f, 0U, true));
 
-	// the dropout has recovered: the times around it are a warm-up (issue #112), never a heading
+	// the dropout has recovered: the times around it are kNotYetGood (issue #112), never a heading
 	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
 	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
 	EXPECT_LOOKUP(history.at(kT0_us + kStep_us), HeadingLookup::kNotYetGood);
@@ -303,7 +303,7 @@ TEST(HeadingHistoryTest, ASampleNotGoodForControlBlocksTheInterpolationAroundIt)
 
 // Issue #112: the heading is not good for control until the estimator aligns it, some seconds after take-off,
 // and a map is sampled about 0.1 s before it is evaluated.
-TEST(HeadingHistoryTest, BeforeTheCurrentRunOfGoodSamplesTheLookupIsAWarmUpNotAFailure)
+TEST(HeadingHistoryTest, BeforeTheCurrentRunOfGoodSamplesTheLookupIsNotYetGoodNotNotGood)
 {
 	HeadingHistory history(fixtureParams());
 	ASSERT_TRUE(history.add(kT0_us + 0U * kStep_us, 0.1f, 0U, false));
@@ -318,7 +318,7 @@ TEST(HeadingHistoryTest, BeforeTheCurrentRunOfGoodSamplesTheLookupIsAWarmUpNotAF
 	EXPECT_TRUE(history.at(kT0_us + 2U * kStep_us + kStep_us / 2U).valid());
 }
 
-TEST(HeadingHistoryTest, ADropoutThatHasRecoveredIsAWarmUpAndOneThatIsStillOnStaysAFailure)
+TEST(HeadingHistoryTest, ADropoutThatHasRecoveredIsNotYetGoodAndOneThatIsStillOnStaysNotGood)
 {
 	HeadingHistory history(fixtureParams());
 	ASSERT_TRUE(history.add(kT0_us + 0U * kStep_us, 0.1f, 0U, true));
@@ -329,7 +329,7 @@ TEST(HeadingHistoryTest, ADropoutThatHasRecoveredIsAWarmUpAndOneThatIsStillOnSta
 	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotGood);
 
 	ASSERT_TRUE(history.add(kT0_us + 3U * kStep_us, 0.1f, 0U, true));
-	// it recovered: the maps sampled during the dropout are a warm-up now
+	// it recovered: the maps sampled during the dropout are kNotYetGood now
 	EXPECT_LOOKUP(history.at(kT0_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
 	EXPECT_LOOKUP(history.at(kT0_us + kStep_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
 	EXPECT_LOOKUP(history.at(kT0_us + 2U * kStep_us + kStep_us / 2U), HeadingLookup::kNotYetGood);
@@ -350,8 +350,8 @@ TEST(HeadingHistoryTest, AGapAndAResetAreStillFailuresInsideTheRunOfGoodSamples)
 }
 
 // Review of the fork PR #10: with a small depth the sample of a delayed map is evicted for good. That is a
-// failure and must stay a safe stop; only kNotYetGood is a warm-up.
-TEST(HeadingHistoryTest, AnEvictedSampleIsAFailureAndOnlyNotYetGoodIsAWarmUp)
+// failure and must stay a safe stop: it is kBeforeFirst, never kNotYetGood.
+TEST(HeadingHistoryTest, AnEvictedSampleStaysBeforeFirstAndIsNeverNotYetGood)
 {
 	HeadingHistory history(HeadingHistoryParams{2, 0.1f});
 	// heading samples 8 ms apart, all good; a map sampled 100 ms before the newest sample
@@ -361,12 +361,6 @@ TEST(HeadingHistoryTest, AnEvictedSampleIsAFailureAndOnlyNotYetGoodIsAWarmUp)
 
 	const HeadingResult late = history.at(kT0_us + 39U * 8'000U - 100'000U);
 	EXPECT_EQ(late.lookup, HeadingLookup::kBeforeFirst);
-	EXPECT_FALSE(isWarmUp(late.lookup));
-	EXPECT_FALSE(isWarmUp(HeadingLookup::kOk));
-	EXPECT_FALSE(isWarmUp(HeadingLookup::kNotGood));
-	EXPECT_FALSE(isWarmUp(HeadingLookup::kGap));
-	EXPECT_FALSE(isWarmUp(HeadingLookup::kReset));
-	EXPECT_TRUE(isWarmUp(HeadingLookup::kNotYetGood));
 }
 
 TEST(HeadingHistoryTest, ANonFiniteHeadingIsNeverUsed)

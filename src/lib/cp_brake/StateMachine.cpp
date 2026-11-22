@@ -78,15 +78,7 @@ StateResult evaluateState(const StateInputs &in)
 
 	out.constraint_valid = (reasons & kReasonConstraintFaults) == 0U;
 
-	// ADR 0020 D5: only a map sampled before the first heading sample is a warm-up (NOT_READY, no latch).
-	// A gap, a reset, a sample not good for control or any failure after the first sample stays a safe stop,
-	// and a warm-up that cannot complete ends in the stale rule above (the map ages past CPB_AGE_STOP).
-	const bool warming_up = !in.heading_valid && in.heading_warming_up;
-
-	if (warming_up) {
-		reasons |= kReasonHeadingWarmUp;
-
-	} else if (!in.heading_valid) {
+	if (!in.heading_valid) {
 		reasons |= kReasonNoHeading;
 	}
 
@@ -115,13 +107,13 @@ StateResult evaluateState(const StateInputs &in)
 	bool latched = in.safe_stop_latched;
 
 	// the only exit: the acknowledgement of this evaluation together with a revalidation of it
-	if (latched && in.pilot_ack && !faulted && !warming_up && in.px4_state_valid && in.time_sync_good) {
+	if (latched && in.pilot_ack && !faulted && in.px4_state_valid && in.time_sync_good) {
 		latched = false;
 	}
 
 	if (in.takeoff_state != kTakeoffStateFlight) {
 		// ADR 0009: nothing is enforced before TAKEOFF_STATE_FLIGHT, so no safe stop and no braking
-		out.state = (latched || faulted || warming_up || !in.px4_state_valid || !in.time_sync_good) ? kStateNotReady
+		out.state = (latched || faulted || !in.px4_state_valid || !in.time_sync_good) ? kStateNotReady
 			    : kStateObserverOnly;
 
 	} else if (latched) {
@@ -133,9 +125,6 @@ StateResult evaluateState(const StateInputs &in)
 	} else if (faulted) {
 		out.state = kStateSafeStop; // no evidence of free space
 		latched = true;
-
-	} else if (warming_up) {
-		out.state = kStateNotReady; // ADR 0020 D5: the heading history is still warming up, nothing is latched
 
 	} else {
 		out.state = in.limiting ? kStateBraking : kStateActiveClear;

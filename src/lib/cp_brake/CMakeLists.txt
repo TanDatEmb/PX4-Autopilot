@@ -41,7 +41,6 @@ px4_add_library(cp_brake_model
 	StateMachine.cpp
 	StoppingModel.cpp
 	TimeSync.cpp
-	WarmUpBound.cpp
 	TravelledDistance.cpp
 )
 target_include_directories(cp_brake_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -59,7 +58,6 @@ if(TARGET unit-ModeRequestGuard)
 endif()
 px4_add_unit_gtest(SRC SetpointLimiterTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC StateMachineTest.cpp LINKLIBS cp_brake_model)
-px4_add_unit_gtest(SRC WarmUpBoundTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC StoppingModelTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC TimeSyncTest.cpp LINKLIBS cp_brake_model)
 px4_add_unit_gtest(SRC TravelledDistanceTest.cpp LINKLIBS cp_brake_model)
