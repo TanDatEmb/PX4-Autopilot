@@ -349,6 +349,26 @@ TEST(HeadingHistoryTest, AGapAndAResetAreStillFailuresInsideTheRunOfGoodSamples)
 	EXPECT_LOOKUP(reset.at(kT0_us + kStep_us / 2U), HeadingLookup::kReset);
 }
 
+// Review of the fork PR #10: with a small depth the sample of a delayed map is evicted for good. That is a
+// failure and must stay a safe stop; only kNotYetGood is a warm-up.
+TEST(HeadingHistoryTest, AnEvictedSampleIsAFailureAndOnlyNotYetGoodIsAWarmUp)
+{
+	HeadingHistory history(HeadingHistoryParams{2, 0.1f});
+	// heading samples 8 ms apart, all good; a map sampled 100 ms before the newest sample
+	for (uint64_t i = 0U; i < 40U; ++i) {
+		ASSERT_TRUE(history.add(kT0_us + i * 8'000U, 0.1f, 0U, true));
+	}
+
+	const HeadingResult late = history.at(kT0_us + 39U * 8'000U - 100'000U);
+	EXPECT_EQ(late.lookup, HeadingLookup::kBeforeFirst);
+	EXPECT_FALSE(isWarmUp(late.lookup));
+	EXPECT_FALSE(isWarmUp(HeadingLookup::kOk));
+	EXPECT_FALSE(isWarmUp(HeadingLookup::kNotGood));
+	EXPECT_FALSE(isWarmUp(HeadingLookup::kGap));
+	EXPECT_FALSE(isWarmUp(HeadingLookup::kReset));
+	EXPECT_TRUE(isWarmUp(HeadingLookup::kNotYetGood));
+}
+
 TEST(HeadingHistoryTest, ANonFiniteHeadingIsNeverUsed)
 {
 	HeadingHistory history(fixtureParams());

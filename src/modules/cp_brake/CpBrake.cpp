@@ -379,8 +379,10 @@ void CpBrake::evaluate()
 	inputs.sample_age_s = sample_age_s;
 	inputs.sample_age_stop_s = _config.sample_age_stop_s;
 	inputs.heading_valid = heading.valid();
-	inputs.heading_warming_up = (heading.lookup == cp_brake::HeadingLookup::kBeforeFirst
-				     || heading.lookup == cp_brake::HeadingLookup::kNotYetGood);
+	// the warm-up is the heading that became good after the map time; kBeforeFirst is not one (the sample was
+	// evicted, a failure), and the exemption ends CPB_AGE_STOP after it began, however fresh the maps are
+	inputs.heading_warming_up = _warm_up_bound.update(cp_brake::isWarmUp(heading.lookup),
+								 hrt_absolute_time(), _config.sample_age_stop_s);
 	inputs.time_sync_good = _time_sync_good;
 	inputs.px4_state_valid = _px4_state_valid;
 	inputs.takeoff_state = _takeoff_state;

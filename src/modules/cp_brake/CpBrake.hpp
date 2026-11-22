@@ -78,6 +78,7 @@
 #include "StoppingModel.hpp"
 #include "TimeSync.hpp"
 #include "TravelledDistance.hpp"
+#include "WarmUpBound.hpp"
 
 class CpBrake : public ModuleBase<CpBrake>, public ModuleParams, public px4::ScheduledWorkItem
 {
@@ -142,6 +143,7 @@ private:
 	cp_brake::SectorCaps _raw_caps{};
 	cp_brake::SectorFlags _sector_valid{};
 
+	cp_brake::WarmUpBound _warm_up_bound;  ///< ends the heading warm-up exemption CPB_AGE_STOP after it began (#112)
 	cp_brake::MapTimeline _map_timeline;   ///< the latest used map is the sample; the limiter step never spans an unused one
 	uint32_t _input_flags{0U};             ///< input check result of the latest obstacle_distance
 	hrt_abstime _last_constraint_timestamp{0U};

@@ -98,6 +98,9 @@ enum class HeadingLookup : uint8_t {
 	kNotYetGood = 8      ///< as kNotGood, but the heading has been good for control since after the time: a warm-up
 };
 
+/** Only kNotYetGood is a warm-up (ADR 0020 D5): kBeforeFirst means the sample was evicted, which is a failure. */
+inline bool isWarmUp(HeadingLookup lookup) { return lookup == HeadingLookup::kNotYetGood; }
+
 struct HeadingResult {
 	HeadingLookup lookup;
 	float heading_rad;   ///< (-pi, pi], FRD to NED yaw; 0 unless lookup is kOk
