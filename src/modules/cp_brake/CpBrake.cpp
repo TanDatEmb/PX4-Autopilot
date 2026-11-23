@@ -74,6 +74,7 @@ CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kAfterLast, cp_brake_status_s::HEAD
 CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kReset, cp_brake_status_s::HEADING_LOOKUP_RESET);
 CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kGap, cp_brake_status_s::HEADING_LOOKUP_GAP);
 CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kNotGood, cp_brake_status_s::HEADING_LOOKUP_NOT_GOOD);
+CP_BRAKE_SAME_VALUE(cp_brake::HeadingLookup::kNotYetGood, cp_brake_status_s::HEADING_LOOKUP_NOT_YET_GOOD);
 CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kGood, cp_brake_status_s::TIME_SYNC_GOOD);
 CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kInvalidLimits, cp_brake_status_s::TIME_SYNC_INVALID_LIMITS);
 CP_BRAKE_SAME_VALUE(cp_brake::TimeSyncVerdict::kNoStatus, cp_brake_status_s::TIME_SYNC_NO_STATUS);
@@ -378,6 +379,7 @@ void CpBrake::evaluate()
 	inputs.sample_age_stop_s = _config.sample_age_stop_s;
 	inputs.heading_valid = heading.valid();
 	inputs.time_sync_good = _time_sync_good;
+	inputs.heading_not_yet_good = (heading.lookup == cp_brake::HeadingLookup::kNotYetGood); // issue #112
 	inputs.px4_state_valid = _px4_state_valid;
 	inputs.takeoff_state = _takeoff_state;
 	inputs.limiting = limiting;

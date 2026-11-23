@@ -22,6 +22,7 @@ uint8 HEADING_LOOKUP_AFTER_LAST = 4	# sample_timestamp is newer than the newest 
 uint8 HEADING_LOOKUP_RESET = 5		# the heading reset counter changed around sample_timestamp
 uint8 HEADING_LOOKUP_GAP = 6		# the heading samples around sample_timestamp are too far apart
 uint8 HEADING_LOOKUP_NOT_GOOD = 7	# a heading sample around sample_timestamp was not good for control
+uint8 HEADING_LOOKUP_NOT_YET_GOOD = 8	# as NOT_GOOD, before the first good heading sample: the start-up warm-up (ADR 0020 D5)
 
 uint8 time_sync_verdict		# time alignment of the latest map that passed the input check, TIME_SYNC_*
 uint8 TIME_SYNC_GOOD = 0
