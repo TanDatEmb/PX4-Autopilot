@@ -409,7 +409,11 @@ void CpBrake::evaluate()
 
 	for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
 		constraints.caps_m_s[i] = result.constraint_valid ? _limiter.caps()[i] : 0.f;
+		// the distance whose stopping speed is the published cap (ADR 0025): a cap of 0 gives the margin
+		constraints.distances_m[i] = cp_brake::stoppingDistance(constraints.caps_m_s[i], _config.stopping);
 	}
+
+	constraints.clearance_m = _config.stopping.margin_m;
 
 	_constraints_pub.publish(constraints);
 	_last_constraint_timestamp = now;

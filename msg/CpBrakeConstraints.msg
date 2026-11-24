@@ -6,6 +6,8 @@ float32 heading_rad		# [rad] vehicle heading at sample_timestamp, rotates the bo
 bool heading_valid		# false when no heading exists for sample_timestamp
 
 float32[72] caps_m_s		# [m/s] speed cap per sector, body FRD, sector 0 forward, clockwise, >= 0
+float32[72] distances_m		# [m] distance whose stopping speed is the cap, per sector (ADR 0025)
+float32 clearance_m		# [m] CPB_MARGIN, the half-width of the corridor of ADR 0025
 bool enforcement_active		# the hook may act on the caps
 bool valid			# the caps may be used; when false the hook follows the ICD-CP-04 fallbacks
 

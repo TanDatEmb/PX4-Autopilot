@@ -163,7 +163,7 @@ void PositionControl::_applyCollisionLimiter()
 	_limiter_record.vel_m_s[0] = vel[0];
 	_limiter_record.vel_m_s[1] = vel[1];
 
-	_limiter_record.result = cp_brake::limitHorizontalSetpoint(_limiter_context, _limiter_constraint, vel_sp, acc_sp);
+	_limiter_record.result = cp_brake::limitHorizontalSetpoint(_limiter_context, _limiter_constraint, vel, vel_sp, acc_sp);
 
 	// nothing is written back unless the hook acted, so the other paths are the unchanged controller
 	if (_limiter_record.result.action == cp_brake::HookAction::kLimited

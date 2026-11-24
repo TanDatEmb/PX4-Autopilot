@@ -116,7 +116,10 @@ PARAM_DEFINE_FLOAT(CPB_T_LAT, -1.f);
 /**
  * Clearance margin of the stopping model
  *
- * Design baseline (SAFE-01), not a qualified limit.
+ * Design baseline (SAFE-01), not a qualified limit. It is also the half-width of the corridor of
+ * ADR 0025: a sector limits the motion only when its obstacle may lie within this distance of the
+ * path, so it must cover the vehicle half-span, the lateral tracking error and the lateral drift over
+ * the map age as well as the stopping margin.
  *
  * @unit m
  * @min 0

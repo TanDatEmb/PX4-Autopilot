@@ -51,13 +51,16 @@
  *   rotated) or not a number.
  * - No action: the constraint says the hook may not act (enforcement_active false), which is how
  *   cp_brake reports an observer-only state or an invalid PX4 estimator or heading (ADR 0007).
- * - Limiting: every sector is a half-plane on the horizontal velocity, v . u_i <= cap_i, where u_i is
- *   the direction of the sector rotated to local NED with the heading of the constraint (the heading
- *   of the sample time, not the current one). Only the component entering a sector is limited, there
- *   is no global minimum range. A cap that is not a finite number >= 0 counts as 0, so the velocity
- *   toward that sector is stopped. When any sector limits the velocity setpoint the horizontal
- *   feed-forward acceleration is cleared (ADR 0020), otherwise it is unchanged; a feed-forward that is
- *   not finite stays as it is.
+ * - Limiting (ADR 0025): the direction of the velocity setpoint is kept and only its speed is scaled,
+ *   v_out = s v_sp with s = min(1, cap_i / (v_sp . u_i)) over the sectors that count, where u_i is the
+ *   direction of the sector rotated to local NED with the heading of the constraint (the heading of
+ *   the sample time, not the current one). A sector counts when it may hold an obstacle within the
+ *   clearance of the ray along the setpoint or along the current velocity: distance_i *
+ *   sin(max(0, angle - 2.5 deg)) <= clearance. There is no global minimum range and no sliding. A cap
+ *   that is not a finite number >= 0 counts as 0, and a distance or clearance that is not a usable
+ *   number makes the sector count (fail closed). When the speed is scaled the horizontal feed-forward
+ *   acceleration is cleared (ADR 0020), otherwise it is unchanged; a feed-forward that is not finite
+ *   stays as it is.
  */
 
 #pragma once
@@ -86,7 +89,9 @@ struct HookConstraint {
 	float heading_rad;             ///< heading at the sample time, rotates the body FRD caps to local NED [rad]
 	bool heading_valid;            ///< a heading exists for the sample time
 	float caps_m_s[kSectorCount];  ///< speed cap per sector [m/s], body FRD, sector 0 forward, clockwise
-	bool enforcement_active;       ///< the hook may act on the caps
+	float distances_m[kSectorCount]; ///< distance whose stopping speed is the cap, per sector [m]
+	float clearance_m;             ///< CPB_MARGIN: the half-width of the corridor of ADR 0025 [m]
+	bool enforcement_active;      ///< the hook may act on the caps
 	bool valid;                    ///< the caps may be used
 	uint8_t state;                 ///< kState* of the state machine
 	uint32_t reason_flags;         ///< kReason* bits of the state machine
@@ -107,7 +112,7 @@ constexpr uint8_t kNoSector{255};
 struct HookResult {
 	HookAction action;      ///< what the hook did
 	uint32_t reason_flags;  ///< kReason* bits: those of the constraint when it was used, plus the hook's own
-	uint8_t active_sector;  ///< the sector whose cap cut the velocity setpoint most, or kNoSector
+	uint8_t active_sector;  ///< the sector that sets the scale of the velocity setpoint, or kNoSector
 };
 
 /**
@@ -115,6 +120,7 @@ struct HookResult {
  *
  * @param context the situation of this call
  * @param constraint the latest cp_brake_constraints
+ * @param vel_ned_m_s [north, east] current horizontal velocity [m/s]; not finite or zero: no direction
  * @param vel_sp_ned_m_s [north, east] horizontal velocity setpoint [m/s], changed in place only when
  *        the result is kLimited or kSafeStop; a setpoint that is not finite is not a velocity command
  *        and is left alone, except by a safe stop
@@ -122,6 +128,6 @@ struct HookResult {
  *        under the same rule; NaN means no feed-forward and stays NaN, except in a safe stop
  */
 HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstraint &constraint,
-				   float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2]);
+				   const float vel_ned_m_s[2], float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2]);
 
 } // namespace cp_brake

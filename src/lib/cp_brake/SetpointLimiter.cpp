@@ -34,11 +34,11 @@
 /**
  * @file SetpointLimiter.cpp
  *
- * The limiter is a sequence of projections of the velocity setpoint onto the half-plane of the sector
- * that it violates most, ending when no sector is violated by more than a numerical tolerance. The
- * origin is inside every half-plane (caps are >= 0), so a projection never makes the vector longer and
- * the empty-handed answer, zero, is always feasible: if the loop does not end within the pass limit,
- * the output is zero, which is what ADR 0008 says about an empty feasible set.
+ * The limiter (ADR 0025) is one pass over the sectors: the velocity setpoint is scaled by the smallest
+ * cap_i / (v_sp . u_i) among the sectors it exceeds that may hold an obstacle within the clearance of
+ * its path. The direction never changes; the origin is inside every half-plane (caps are >= 0), so the
+ * scaled vector meets every sector that counts and is never longer than the input; a cap of 0 on the
+ * path gives zero, which is what ADR 0008 says about a blocked direction.
  *
  * The unit vectors of the sectors come from a table of the 72 bearings and one rotation by the
  * heading, so there is no trigonometry per sector and no array on the stack: this runs on the work
@@ -61,14 +61,14 @@ namespace cp_brake
 namespace
 {
 
-// A numerical tolerance, not a safety value: float rounding of a projection is about 1e-6 m/s at
-// 12 m/s, and a cap that is met within this is met. It also keeps a sector at exactly 90 degrees from
-// the motion (cap 0, product of the order of 1e-16) from counting as violated.
+// A numerical tolerance, not a safety value: float rounding of a product is about 1e-6 m/s at 12 m/s,
+// and a cap that is met within this is met. It also keeps a sector at exactly 90 degrees from the
+// motion (cap 0, product of the order of 1e-16) from counting as exceeded.
 constexpr float kToleranceM_s{1e-4f};
 
-// Each projection removes the largest violation. Two sectors with nearly opposite directions can make
-// the sequence converge slowly; then the output is zero.
-constexpr int kMaxPasses{8};
+// cos and sin of half a sector (2.5 degrees): sectors are centred on their bearing (ICD-CP-03)
+constexpr float kHalfSectorCos{9.990482216e-01f};
+constexpr float kHalfSectorSin{4.361938737e-02f};
 
 // cos and sin of the bearing of sector i (i * 5 degrees, clockwise from forward), generated, and
 // checked against cosf and sinf by the unit tests.
@@ -127,6 +127,25 @@ inline float usableCap(const float cap)
 	return (std::isfinite(cap) && cap >= 0.f) ? cap : 0.f;
 }
 
+// ADR 0025 decision 1: true when the sector with direction (u_n, u_e) may hold an obstacle within the
+// clearance of the ray along the unit direction (dir_n, dir_e). Every point of the sector at a range of
+// at least distance_m lies at least distance_m * sin(angle - half sector) from the ray. A distance or a
+// clearance that is not a number makes the comparison false, so the sector counts (fail closed).
+inline bool inCorridor(const float dir_n, const float dir_e, const float u_n, const float u_e,
+		       const float distance_m, const float clearance_m)
+{
+	const float cos_angle = dir_n * u_n + dir_e * u_e;
+
+	if (!(cos_angle > 0.f)) {
+		return false; // the ray does not enter the sector
+	}
+
+	const float sin_angle = fabsf(dir_n * u_e - dir_e * u_n);
+	const float sin_edge = sin_angle * kHalfSectorCos - cos_angle * kHalfSectorSin; // the nearest edge
+	const float offset_m = distance_m * (sin_edge > 0.f ? sin_edge : 0.f);
+	return !(offset_m > clearance_m);
+}
+
 // Fail closed, like the sample age of the state machine: no constraint, a limit that is not a positive
 // number, a constraint stamped after now, or an age at or above the limit is stale.
 bool constraintIsStale(const HookContext &context, const HookConstraint &constraint)
@@ -151,7 +170,7 @@ HookResult safeStop(const uint32_t reason_flags, float vel_sp[2], float acc_sp[2
 } // namespace
 
 HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstraint &constraint,
-				   float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2])
+				   const float vel_ned_m_s[2], float vel_sp_ned_m_s[2], float acc_sp_ned_m_s2[2])
 {
 	if (!context.enabled || !context.in_flight) {
 		return HookResult{HookAction::kTransparent, 0U, kNoSector};
@@ -194,75 +213,64 @@ HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstra
 		return result;
 	}
 
-	// a sector with a cap at or above the speed cannot be violated: its direction is not computed
+	// a sector with a cap at or above the speed cannot be exceeded: its direction is not computed
 	const float speed_in = sqrtf(vel_in[0] * vel_in[0] + vel_in[1] * vel_in[1]);
+
+	if (!(speed_in > 0.f)) {
+		return result; // no motion asked: nothing to limit
+	}
+
 	const float ch = cosf(constraint.heading_rad);
 	const float sh = sinf(constraint.heading_rad);
 
-	float vel[2] = {vel_in[0], vel_in[1]};
-	float most_excess = 0.f;
-	bool limited = false;
-	bool converged = false;
+	// the two rays of the corridor (ADR 0025 decision 2): the setpoint and, when it has one, the current
+	// velocity, which covers the turn while the vehicle follows a changed command
+	const float sp_dir[2] = {vel_in[0] / speed_in, vel_in[1] / speed_in};
+	const float speed_now = (vel_ned_m_s != nullptr) ? sqrtf(vel_ned_m_s[0] * vel_ned_m_s[0] + vel_ned_m_s[1] * vel_ned_m_s[1])
+				: 0.f;
+	const bool has_vel_dir = std::isfinite(speed_now) && speed_now > 0.f;
+	const float vel_dir[2] = {has_vel_dir ? vel_ned_m_s[0] / speed_now : 0.f, has_vel_dir ? vel_ned_m_s[1] / speed_now : 0.f};
 
-	for (int pass = 0; pass <= kMaxPasses; ++pass) {
-		std::size_t worst = kSectorCount;
-		float worst_excess = kToleranceM_s;
-		float worst_north = 0.f;
-		float worst_east = 0.f;
+	// a clearance that is not a finite number >= 0 is no evidence that a sector is off the path: every
+	// sector the setpoint enters counts
+	const float clearance_m = (std::isfinite(constraint.clearance_m) && constraint.clearance_m >= 0.f)
+				  ? constraint.clearance_m : INFINITY;
 
-		for (std::size_t sector = 0; sector < kSectorCount; ++sector) {
-			const float cap = usableCap(constraint.caps_m_s[sector]);
+	float scale = 1.f;
 
-			if (cap >= speed_in) {
-				continue;
-			}
+	for (std::size_t sector = 0; sector < kSectorCount; ++sector) {
+		const float cap = usableCap(constraint.caps_m_s[sector]);
 
-			float north;
-			float east;
-			sectorDirection(sector, ch, sh, north, east);
-			const float excess = vel[0] * north + vel[1] * east - cap;
-
-			if (excess > worst_excess) {
-				worst = sector;
-				worst_excess = excess;
-				worst_north = north;
-				worst_east = east;
-			}
+		if (cap >= speed_in) {
+			continue;
 		}
 
-		if (worst == kSectorCount) {
-			converged = true;
-			break;
+		float north;
+		float east;
+		sectorDirection(sector, ch, sh, north, east);
+		const float along = vel_in[0] * north + vel_in[1] * east;
+
+		if (along - cap <= kToleranceM_s) {
+			continue; // the setpoint does not exceed this cap
 		}
 
-		if (pass == kMaxPasses) {
-			break;
-		}
+		const float distance_m = constraint.distances_m[sector];
+		const bool counts = inCorridor(sp_dir[0], sp_dir[1], north, east, distance_m, clearance_m)
+				    || (has_vel_dir && inCorridor(vel_dir[0], vel_dir[1], north, east, distance_m, clearance_m));
 
-		// only the component entering the sector is removed
-		vel[0] -= worst_excess * worst_north;
-		vel[1] -= worst_excess * worst_east;
-		limited = true;
-
-		if (worst_excess > most_excess) {
-			most_excess = worst_excess;
-			result.active_sector = static_cast<uint8_t>(worst);
+		if (counts && cap / along < scale) {
+			scale = cap / along;
+			result.active_sector = static_cast<uint8_t>(sector);
 		}
 	}
 
-	if (!converged) {
-		// no vector within the pass limit satisfies every sector: nothing is the only safe answer
-		vel[0] = 0.f;
-		vel[1] = 0.f;
-	}
-
-	// the velocity setpoint changes only if a projection ran or it had to be zeroed
-	if (!limited && converged) {
+	if (result.active_sector == kNoSector) {
 		return result; // no sector limits the setpoint: it and the feed-forward are unchanged
 	}
 
-	vel_sp_ned_m_s[0] = vel[0];
-	vel_sp_ned_m_s[1] = vel[1];
+	// only the speed changes, never the direction (no sliding, ADR 0025)
+	vel_sp_ned_m_s[0] = vel_in[0] * scale;
+	vel_sp_ned_m_s[1] = vel_in[1] * scale;
 
 	// ADR 0020: when a sector limits the velocity setpoint the horizontal feed-forward is cleared, so the
 	// trajectory cannot push the vehicle through the cap (the cost is a small acceleration step when
