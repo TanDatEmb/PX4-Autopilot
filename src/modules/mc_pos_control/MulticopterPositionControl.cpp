@@ -681,7 +681,10 @@ void MulticopterPositionControl::updateCollisionLimiter(const bool flying)
 
 		for (std::size_t sector = 0; sector < cp_brake::kSectorCount; ++sector) {
 			_cp_hook_constraint.caps_m_s[sector] = _cp_constraints.caps_m_s[sector];
+			_cp_hook_constraint.distances_m[sector] = _cp_constraints.distances_m[sector];
 		}
+
+		_cp_hook_constraint.clearance_m = _cp_constraints.clearance_m;
 
 		_cp_hook_constraint.enforcement_active = _cp_constraints.enforcement_active;
 		_cp_hook_constraint.valid = _cp_constraints.valid;

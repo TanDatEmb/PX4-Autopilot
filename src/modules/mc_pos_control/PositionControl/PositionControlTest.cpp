@@ -705,8 +705,10 @@ TEST_F(CollisionLimiterTest, InAnyOtherNavigationStateTheHookIsTransparentAndSay
 	EXPECT_FLOAT_EQ(_output.vx, 8.f);
 }
 
-TEST_F(CollisionLimiterTest, EachCardinalCapLimitsOnlyTheComponentTowardItself)
+TEST_F(CollisionLimiterTest, EachCardinalCapScalesTheSetpointAndKeepsItsDirection)
 {
+	// ADR 0025: the speed is scaled until the component toward the sector meets its cap; the direction
+	// is kept (the fixture's distances are 0, so every sector the setpoint enters counts)
 	const struct {
 		int sector;
 		Vector2f direction;
@@ -726,7 +728,7 @@ TEST_F(CollisionLimiterTest, EachCardinalCapLimitsOnlyTheComponentTowardItself)
 		EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
 		EXPECT_EQ(record().result.active_sector, c.sector);
 		EXPECT_NEAR(out.dot(c.direction), 3.f, 1e-4f); // toward the sector: at its cap
-		EXPECT_NEAR(out.dot(perpendicular), 2.f, 1e-4f); // along it: untouched
+		EXPECT_NEAR(out.dot(perpendicular), 2.f * 3.f / 8.f, 1e-4f); // along it: scaled by the same factor
 		expectVerticalAndYawAsBaseline();
 		expectAllFinite();
 	}
@@ -830,7 +832,7 @@ TEST_F(CollisionLimiterTest, TheRecordHoldsTheSetpointsBeforeAndAfter)
 	EXPECT_FLOAT_EQ(record().vel_m_s[0], 1.f);
 	EXPECT_FLOAT_EQ(record().vel_m_s[1], -1.f);
 	EXPECT_NEAR(record().vel_sp_out_m_s[0], 3.f, 1e-4f);
-	EXPECT_NEAR(record().vel_sp_out_m_s[1], 2.f, 1e-4f);
+	EXPECT_NEAR(record().vel_sp_out_m_s[1], 0.75f, 1e-4f);
 	EXPECT_FLOAT_EQ(record().vel_sp_out_m_s[0], _output.vx);
 	EXPECT_FLOAT_EQ(record().vel_sp_out_m_s[1], _output.vy);
 	EXPECT_EQ(record().acc_sp_out_m_s2[0], 0.f); // limiting clears the feed-forward
@@ -866,7 +868,7 @@ TEST_F(CollisionLimiterTest, AnUnsetFeedForwardStaysUnsetAndNothingNotANumberRea
 	expectAllFinite();
 }
 
-TEST_F(CollisionLimiterTest, ACapThatIsNotAFiniteNumberGreaterOrEqualZeroStopsTheVelocityTowardTheSector)
+TEST_F(CollisionLimiterTest, ACapThatIsNotAFiniteNumberGreaterOrEqualZeroStopsAMotionThatEntersTheSector)
 {
 	for (const float bad : {NAN, INFINITY, -INFINITY, -1.f, -0.5f}) {
 		SCOPED_TRACE(bad);
@@ -876,8 +878,8 @@ TEST_F(CollisionLimiterTest, ACapThatIsNotAFiniteNumberGreaterOrEqualZeroStopsTh
 		run();
 		EXPECT_TRUE(_ok);
 		EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
-		EXPECT_NEAR(_output.vx, 0.f, 1e-3f); // stopped toward the sector
-		EXPECT_NEAR(_output.vy, 2.f, 1e-3f); // the rest of the motion is kept
+		EXPECT_NEAR(_output.vx, 0.f, 1e-3f); // the motion enters the sector: stopped, no sliding (ADR 0025)
+		EXPECT_NEAR(_output.vy, 0.f, 1e-3f);
 		expectAllFinite();
 	}
 }
@@ -1142,16 +1144,16 @@ TEST_F(CollisionLimiterTest, AConstraintThatIsNotValidIsASafeStopWhateverItsStat
 	expectSafeStop(0U);
 }
 
-TEST_F(CollisionLimiterTest, TwoCapsAtOnceLimitBothComponents)
+TEST_F(CollisionLimiterTest, TwoCapsAtOnceTheTighterOneSetsTheSpeed)
 {
-	// a corner: ahead at 3 m/s and to the right at 2 m/s; the limiter needs more than one projection
+	// a corner: ahead at 3 m/s and to the right at 2 m/s; the direction is kept and 2 / 8 sets the scale
 	_constraint.caps_m_s[0] = 3.f;
 	_constraint.caps_m_s[18] = 2.f;
 	setVelocity(8.f, 8.f);
 	run();
 	EXPECT_TRUE(_ok);
 	EXPECT_EQ(record().result.action, cp_brake::HookAction::kLimited);
-	EXPECT_NEAR(_output.vx, 3.f, 1e-3f);
+	EXPECT_NEAR(_output.vx, 2.f, 1e-3f);
 	EXPECT_NEAR(_output.vy, 2.f, 1e-3f);
 }
 
