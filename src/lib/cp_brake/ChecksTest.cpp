@@ -69,6 +69,9 @@ ConfigInputs validConfig()
 	c.time_sync_enabled = true;
 	c.time_sync_required = true;
 	c.decel_bound_m_s2 = 3.f;
+	c.stopping_side = StoppingParams{1.2f, 4.f, 0.1f, 2.f, 12.f};
+	c.side_speed_m_s = 5.f;
+	c.unclaimed_start_deg = 134.6f;
 	return c;
 }
 
@@ -204,6 +207,50 @@ TEST(ConfigCheckTest, HardwareWithoutTheUxrceTimeSyncIsAFaultAndSimulationIsNot)
 	c.time_sync_enabled = true;
 	c.time_sync_required = true;
 	EXPECT_EQ(checkConfig(c), 0U);
+}
+
+TEST(ConfigCheckTest, TheDirectionClassSentinelsAreStoppingFaults)
+{
+	// SYS-CP-028, 031: CPB_A_SIDE, CPB_V_SIDE and CPB_REAR_ANG are platform values with a -1 sentinel
+	const float kNaN = std::numeric_limits<float>::quiet_NaN();
+
+	for (const float a : {-1.f, 0.f, kNaN}) {
+		ConfigInputs c = validConfig();
+		c.stopping_side.a_brake_m_s2 = a;
+		EXPECT_NE(checkConfig(c) & ConfigFaults::kStoppingParams, 0U) << a;
+	}
+
+	for (const float v : {-1.f, 0.f, kNaN, 12.1f}) { // 12.1 is above CPB_MAX_V
+		ConfigInputs c = validConfig();
+		c.side_speed_m_s = v;
+		EXPECT_EQ(checkConfig(c), ConfigFaults::kStoppingParams) << v;
+	}
+
+	for (const float angle : {-1.f, 45.f, 180.1f, kNaN}) {
+		ConfigInputs c = validConfig();
+		c.unclaimed_start_deg = angle;
+		EXPECT_EQ(checkConfig(c), ConfigFaults::kStoppingParams) << angle;
+	}
+}
+
+TEST(ConfigCheckTest, TheDirectionClassBoundsAreAllowed)
+{
+	ConfigInputs c = validConfig();
+	c.side_speed_m_s = c.stopping.max_speed_m_s; // the lock may equal the model maximum
+	EXPECT_EQ(checkConfig(c), 0U);
+
+	for (const float angle : {45.1f, 180.f}) { // 180 leaves no unclaimed bearing
+		c = validConfig();
+		c.unclaimed_start_deg = angle;
+		EXPECT_EQ(checkConfig(c), 0U) << angle;
+	}
+}
+
+TEST(ConfigCheckTest, TheDecelerationBoundIsNotBelowTheSideBrakingAcceleration)
+{
+	ConfigInputs c = validConfig();
+	c.stopping_side.a_brake_m_s2 = 3.5f; // a side class braking harder than the bound
+	EXPECT_EQ(checkConfig(c), ConfigFaults::kDecelBound);
 }
 
 TEST(ConfigCheckTest, TheDecelerationBoundSentinelIsAFault)

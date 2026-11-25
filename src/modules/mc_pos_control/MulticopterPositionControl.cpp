@@ -58,6 +58,8 @@ MulticopterPositionControl::MulticopterPositionControl(bool vtol) :
 	_sample_interval_s.update(0.01f); // 100 Hz default
 	_param_cpb_en_handle = param_find("CPB_EN");
 	_param_cpb_cstr_age_handle = param_find("CPB_CSTR_AGE");
+	_param_cpb_v_side_handle = param_find("CPB_V_SIDE");
+	_param_cpb_rear_ang_handle = param_find("CPB_REAR_ANG");
 	parameters_update(true);
 	_tilt_limit_slew_rate.setSlewRate(.2f);
 	_takeoff_status_pub.advertise();
@@ -104,8 +106,23 @@ void MulticopterPositionControl::parameters_update(bool force)
 			cpb_cstr_age_s = -1.f;
 		}
 
+		// the speed lock and the unclaimed bearings (SYS-CP-031): no such parameter locks at 0 and counts every
+		// direction outside the forward class as unclaimed (fail closed in the hook)
+		float cpb_v_side_m_s = -1.f;
+		float cpb_rear_ang_deg = -1.f;
+
+		if (_param_cpb_v_side_handle == PARAM_INVALID || param_get(_param_cpb_v_side_handle, &cpb_v_side_m_s) != 0) {
+			cpb_v_side_m_s = -1.f;
+		}
+
+		if (_param_cpb_rear_ang_handle == PARAM_INVALID || param_get(_param_cpb_rear_ang_handle, &cpb_rear_ang_deg) != 0) {
+			cpb_rear_ang_deg = -1.f;
+		}
+
 		_cpb_en = cpb_en;
 		_cpb_cstr_age_s = cpb_cstr_age_s;
+		_cpb_v_side_m_s = cpb_v_side_m_s;
+		_cpb_rear_ang_deg = cpb_rear_ang_deg;
 
 		float sample_freq_hz = 1.f / _sample_interval_s.mean();
 
@@ -599,7 +616,7 @@ void MulticopterPositionControl::Run()
 			// The limiter hook (cp_brake) sits inside update(); every call below sees the same inputs. It is
 			// not eligible while the ground contact suppression above clears the setpoints and the
 			// integrators: a safe stop there would put horizontal velocity feedback back during touchdown.
-			updateCollisionLimiter(flying && !flying_but_ground_contact);
+			updateCollisionLimiter(flying && !flying_but_ground_contact, states.yaw);
 
 			// Run position control
 			if (_control.update(dt)) {
@@ -666,7 +683,7 @@ void MulticopterPositionControl::Run()
 	perf_end(_cycle_perf);
 }
 
-void MulticopterPositionControl::updateCollisionLimiter(const bool flying)
+void MulticopterPositionControl::updateCollisionLimiter(const bool flying, const float heading_rad)
 {
 	// the work queue of this module has a 2240 byte stack on the boards: no large message on it
 	if (_vehicle_status_sub.update()) {
@@ -700,7 +717,9 @@ void MulticopterPositionControl::updateCollisionLimiter(const bool flying)
 	const bool nav_state_enforced = (_nav_state == vehicle_status_s::NAVIGATION_STATE_POSCTL)
 					|| (_nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION);
 
-	const cp_brake::HookContext context{_cpb_en == 1, flying, nav_state_enforced, _cp_hook_applied_time, _cpb_cstr_age_s};
+	// the speed lock is judged against the current heading (SYS-CP-031), the caps against the sample's
+	const cp_brake::HookContext context{_cpb_en == 1, flying, nav_state_enforced, _cp_hook_applied_time, _cpb_cstr_age_s,
+					    heading_rad, _cpb_v_side_m_s, _cpb_rear_ang_deg};
 	_control.setCollisionLimiter(context, _cp_hook_constraint);
 }
 

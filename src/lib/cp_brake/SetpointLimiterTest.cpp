@@ -58,9 +58,17 @@ constexpr uint64_t kNowUs{10000000U};
 constexpr float kClearanceM{2.f};
 const float kHover[2] = {0.f, 0.f}; // no current velocity: only the setpoint makes the corridor
 
+// the speed lock and the unclaimed bearings are out of the way here (a lock no setpoint reaches, no
+// unclaimed bearing); the tests of SYS-CP-031 set them
 cp_brake::HookContext flightContext()
 {
-	return cp_brake::HookContext{true, true, true, kNowUs, 0.5f};
+	return cp_brake::HookContext{true, true, true, kNowUs, 0.5f, 0.f, 1000.f, 180.f};
+}
+
+// the X500 bench values of the direction classes (fixtures here): lock 5 m/s, unclaimed beyond 134.6 deg
+cp_brake::HookContext classContext(const float heading_rad)
+{
+	return cp_brake::HookContext{true, true, true, kNowUs, 0.5f, heading_rad, 5.f, 134.6f};
 }
 
 cp_brake::HookConstraint openConstraint(const float heading_rad)
@@ -632,6 +640,202 @@ TEST(SetpointLimiterTest, TheFeedForwardIsClearedExactlyWhenTheVelocityIsLimited
 			EXPECT_EQ(acc[1], acc_in[1]);
 			EXPECT_EQ(vel[0], vel_in[0]);
 			EXPECT_EQ(vel[1], vel_in[1]);
+		}
+	}
+}
+
+// SYS-CP-031: the speed lock outside the forward class and the unclaimed directions
+
+TEST(SetpointLimiterTest, TheLockScalesASideSetpointToTheLockAndKeepsItsDirection)
+{
+	const cp_brake::HookConstraint c = openConstraint(0.f);
+	float vel[2] = {0.f, 8.f}; // east, 90 degrees from the nose
+	float acc[2] = {1.f, 1.f};
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, kHover, vel, acc);
+
+	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+	EXPECT_EQ(r.active_sector, cp_brake::kNoSector); // the lock, not a sector
+	EXPECT_NEAR(vel[0], 0.f, 1e-6f);
+	EXPECT_NEAR(vel[1], 5.f, 1e-5f);
+	EXPECT_EQ(acc[0], 0.f); // limited: the feed-forward is cleared (ADR 0020)
+	EXPECT_EQ(acc[1], 0.f);
+	EXPECT_EQ(r.reason_flags & cp_brake::kReasonUnclaimedDirection, 0U);
+}
+
+TEST(SetpointLimiterTest, TheForwardClassIsNotLockedAndItsBoundaryIsForward)
+{
+	const cp_brake::HookConstraint c = openConstraint(0.f);
+
+	for (const float deg : {0.f, 30.f, 45.f, -45.f}) {
+		const float rad = deg * kPi / 180.f;
+		float vel[2] = {12.f * cosf(rad), 12.f * sinf(rad)};
+		float acc[2] = {NAN, NAN};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, kHover, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kClear) << deg;
+		EXPECT_NEAR(vel[0] * vel[0] + vel[1] * vel[1], 144.f, 1e-3f) << deg;
+	}
+
+	for (const float deg : {46.f, -46.f, 90.f, 134.f, 180.f}) {
+		const float rad = deg * kPi / 180.f;
+		float vel[2] = {12.f * cosf(rad), 12.f * sinf(rad)};
+		float acc[2] = {NAN, NAN};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, kHover, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kLimited) << deg;
+		EXPECT_NEAR(sqrtf(vel[0] * vel[0] + vel[1] * vel[1]), 5.f, 1e-4f) << deg;
+		EXPECT_NEAR(atan2f(vel[1], vel[0]), atan2f(sinf(rad), cosf(rad)), 1e-5f) << deg; // direction kept
+	}
+}
+
+TEST(SetpointLimiterTest, TheLockUsesTheCurrentHeadingNotTheOneOfTheSample)
+{
+	// the caps rotate with the heading of the sample (0 here); the lock follows the nose now (east)
+	const cp_brake::HookConstraint c = openConstraint(0.f);
+	const float east = kPi / 2.f;
+
+	float along_nose[2] = {0.f, 8.f};
+	float acc[2] = {NAN, NAN};
+	EXPECT_EQ(cp_brake::limitHorizontalSetpoint(classContext(east), c, kHover, along_nose, acc).action,
+		  cp_brake::HookAction::kClear);
+	EXPECT_NEAR(along_nose[1], 8.f, 1e-6f);
+
+	float sideways[2] = {8.f, 0.f}; // north is 90 degrees from a nose pointing east
+	EXPECT_EQ(cp_brake::limitHorizontalSetpoint(classContext(east), c, kHover, sideways, acc).action,
+		  cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(sideways[0], 5.f, 1e-5f);
+}
+
+TEST(SetpointLimiterTest, TheCurrentVelocityLocksOnlyWhileItIsFasterThanTheLock)
+{
+	const cp_brake::HookConstraint c = openConstraint(0.f);
+	float acc[2] = {NAN, NAN};
+
+	// the setpoint is forward; the vehicle still slides east at 4 m/s, inside the lock: not locked
+	const float slow_slide[2] = {0.f, 4.f};
+	float vel[2] = {10.f, 0.f};
+	EXPECT_EQ(cp_brake::limitHorizontalSetpoint(classContext(0.f), c, slow_slide, vel, acc).action,
+		  cp_brake::HookAction::kClear);
+	EXPECT_NEAR(vel[0], 10.f, 1e-6f);
+
+	// at 6 m/s east the vehicle is beyond the lock sideways: the setpoint is scaled to the lock
+	const float fast_slide[2] = {0.f, 6.f};
+	vel[0] = 10.f;
+	vel[1] = 0.f;
+	EXPECT_EQ(cp_brake::limitHorizontalSetpoint(classContext(0.f), c, fast_slide, vel, acc).action,
+		  cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(vel[0], 5.f, 1e-5f);
+}
+
+TEST(SetpointLimiterTest, ASectorThatLimitsMoreThanTheLockKeepsItsSector)
+{
+	cp_brake::HookConstraint c = openConstraint(0.f);
+	c.caps_m_s[18] = 2.f; // east
+	float vel[2] = {0.f, 8.f};
+	float acc[2] = {NAN, NAN};
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, kHover, vel, acc);
+
+	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+	EXPECT_EQ(r.active_sector, 18);
+	EXPECT_NEAR(vel[1], 2.f, 1e-5f);
+}
+
+TEST(SetpointLimiterTest, AnUnclaimedDirectionIsReportedAndLimitsNothingMore)
+{
+	const cp_brake::HookConstraint c = openConstraint(0.f);
+
+	for (const float deg : {140.f, 180.f, -140.f}) {
+		const float rad = deg * kPi / 180.f;
+		float vel[2] = {3.f * cosf(rad), 3.f * sinf(rad)}; // below the lock
+		float acc[2] = {NAN, NAN};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, kHover, vel, acc);
+		EXPECT_EQ(r.action, cp_brake::HookAction::kClear) << deg;
+		EXPECT_NE(r.reason_flags & cp_brake::kReasonUnclaimedDirection, 0U) << deg;
+		EXPECT_NEAR(sqrtf(vel[0] * vel[0] + vel[1] * vel[1]), 3.f, 1e-5f) << deg;
+	}
+
+	for (const float deg : {0.f, 90.f, 130.f, -130.f}) {
+		const float rad = deg * kPi / 180.f;
+		float vel[2] = {3.f * cosf(rad), 3.f * sinf(rad)};
+		float acc[2] = {NAN, NAN};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, kHover, vel, acc);
+		EXPECT_EQ(r.reason_flags & cp_brake::kReasonUnclaimedDirection, 0U) << deg;
+	}
+
+	// a forward setpoint while the vehicle still moves backward faster than the lock: reported and locked
+	const float backward[2] = {-6.f, 0.f};
+	float vel[2] = {8.f, 0.f};
+	float acc[2] = {NAN, NAN};
+	const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, backward, vel, acc);
+	EXPECT_NE(r.reason_flags & cp_brake::kReasonUnclaimedDirection, 0U);
+	EXPECT_EQ(r.action, cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(vel[0], 5.f, 1e-5f);
+}
+
+TEST(SetpointLimiterTest, UnusableLockInputsFailClosed)
+{
+	const cp_brake::HookConstraint c = openConstraint(0.f);
+	float acc[2] = {NAN, NAN};
+
+	// no usable heading: every direction is locked, forward included
+	float forward[2] = {8.f, 0.f};
+	EXPECT_EQ(cp_brake::limitHorizontalSetpoint(classContext(NAN), c, kHover, forward, acc).action,
+		  cp_brake::HookAction::kLimited);
+	EXPECT_NEAR(forward[0], 5.f, 1e-5f);
+
+	// no usable lock speed: the locked directions get 0, the forward class is unchanged
+	for (const float lock : {NAN, -1.f, 0.f}) {
+		cp_brake::HookContext context = classContext(0.f);
+		context.side_speed_m_s = lock;
+		float side[2] = {0.f, 3.f};
+		EXPECT_EQ(cp_brake::limitHorizontalSetpoint(context, c, kHover, side, acc).action, cp_brake::HookAction::kLimited)
+				<< lock;
+		EXPECT_NEAR(side[1], 0.f, 1e-6f) << lock;
+
+		float ahead[2] = {3.f, 0.f};
+		EXPECT_EQ(cp_brake::limitHorizontalSetpoint(context, c, kHover, ahead, acc).action, cp_brake::HookAction::kClear)
+				<< lock;
+	}
+
+	// no usable start of the unclaimed bearings: every direction outside the forward class is reported
+	for (const float angle : {NAN, -1.f, 45.f, 200.f}) {
+		cp_brake::HookContext context = classContext(0.f);
+		context.unclaimed_start_deg = angle;
+		float side[2] = {0.f, 3.f};
+		EXPECT_NE(cp_brake::limitHorizontalSetpoint(context, c, kHover, side, acc).reason_flags
+			  & cp_brake::kReasonUnclaimedDirection, 0U) << angle;
+	}
+}
+
+TEST(SetpointLimiterTest, TheLockHoldsForAnyInputAndNeverTurnsOrLengthensTheSetpoint)
+{
+	Lcg rng{777U};
+
+	for (int trial = 0; trial < 3000; ++trial) {
+		const float heading = (rng.next() - 0.5f) * 14.f;
+		const float nose_heading = heading + (rng.next() - 0.5f) * 0.6f;
+		cp_brake::HookConstraint c = openConstraint(heading);
+
+		for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
+			c.caps_m_s[i] = (rng.next() < 0.2f) ? rng.next() * 12.f : 12.f;
+		}
+
+		const float speed = rng.next() * 12.f;
+		const float angle = rng.next() * 2.f * kPi;
+		float vel[2] = {speed * cosf(angle), speed * sinf(angle)};
+		const float vel_in[2] = {vel[0], vel[1]};
+		float acc[2] = {NAN, NAN};
+		cp_brake::limitHorizontalSetpoint(classContext(nose_heading), c, kHover, vel, acc);
+		SCOPED_TRACE(::testing::Message() << "trial " << trial);
+
+		const float out = sqrtf(vel[0] * vel[0] + vel[1] * vel[1]);
+		EXPECT_LE(out, speed + 1e-4f);
+		EXPECT_GE(dot(vel, vel_in), -1e-4f);           // never reversed
+		EXPECT_NEAR(cross(vel, vel_in), 0.f, 1e-3f);   // never turned
+
+		const float nose[2] = {cosf(nose_heading), sinf(nose_heading)};
+		const float cos_angle = (speed > 0.f) ? dot(vel_in, nose) / speed : 1.f;
+
+		if (cos_angle < cosf(45.5f * kPi / 180.f)) {
+			EXPECT_LE(out, 5.f + 1e-3f); // outside the forward class: at most the lock
 		}
 	}
 }

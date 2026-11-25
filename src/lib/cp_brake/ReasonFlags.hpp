@@ -68,6 +68,8 @@ constexpr uint32_t kReasonConstraintStale{1U << 10};
 constexpr uint32_t kReasonConstraintMalformed{1U << 11};
 /** The hook is transparent because the navigation state is neither Position nor Mission. */
 constexpr uint32_t kReasonNavState{1U << 12};
+/** Set by the hook: the motion points beyond CPB_REAR_ANG, outside the claim (SYS-CP-031 b); it limits nothing. */
+constexpr uint32_t kReasonUnclaimedDirection{1U << 13};
 
 /** The reasons that make the caps unusable as a whole (no evidence of free space). */
 constexpr uint32_t kReasonConstraintFaults{kReasonInvalidConfig | kReasonFrameInvalid | kReasonDataInvalid

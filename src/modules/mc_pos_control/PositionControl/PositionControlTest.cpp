@@ -486,7 +486,8 @@ public:
 		_states.acceleration = Vector3f(0.f, 0.f, 0.f);
 		_states.yaw = 0.f;
 
-		_context = cp_brake::HookContext{true, true, true, kNowUs, kAgeLimitS};
+		// a speed lock no setpoint here reaches and no unclaimed bearing: these tests are about the caps
+		_context = cp_brake::HookContext{true, true, true, kNowUs, kAgeLimitS, 0.f, 1000.f, 180.f};
 		_constraint = cp_brake::HookConstraint{};
 		_constraint.present = true;
 		_constraint.timestamp_us = kNowUs - 20000U;

@@ -88,8 +88,16 @@ float travelledTowardSector(const TravelInputs &inputs, std::size_t sector);
  * Raw caps and validity of the 72 sectors of one map. wire_cm points at kSectorCount values of the
  * ObstacleDistance of ICD-CP-03. Returns true when the inputs were usable; false when the whole map
  * is unknown (caps 0, no sector valid). A sector is valid when its wire value is not UINT16_MAX.
+ *
+ * Direction classes (SYS-CP-028, SYS-CP-031 b): a sector whose centre is within kForwardClassDeg of
+ * the nose uses `forward`, every other sector uses `side`. A sector whose centre is more than
+ * unclaimed_start_deg from the nose is outside the claim: when it has no evidence (UINT16_MAX) its cap
+ * is unclaimed_cap_m_s and it counts as valid, so the limiter may raise it; an observed range there is
+ * capped by the side model as everywhere else. An unclaimed_start_deg of 180 or more leaves no sector
+ * outside the claim.
  */
 bool rawSectorCaps(const uint16_t *wire_cm, uint16_t min_cm, uint16_t max_cm, const TravelInputs &inputs,
-		   const StoppingParams &stopping, SectorCaps &caps, SectorFlags &valid);
+		   const StoppingParams &forward, const StoppingParams &side, float unclaimed_start_deg,
+		   float unclaimed_cap_m_s, SectorCaps &caps, SectorFlags &valid);
 
 } // namespace cp_brake

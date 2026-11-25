@@ -73,7 +73,8 @@ float travelledTowardSector(const TravelInputs &in, std::size_t sector)
 }
 
 bool rawSectorCaps(const uint16_t *wire_cm, uint16_t min_cm, uint16_t max_cm, const TravelInputs &inputs,
-		   const StoppingParams &stopping, SectorCaps &caps, SectorFlags &valid)
+		   const StoppingParams &forward, const StoppingParams &side, float unclaimed_start_deg,
+		   float unclaimed_cap_m_s, SectorCaps &caps, SectorFlags &valid)
 {
 	if (!isUsable(inputs)) {
 		// no usable travelled distance: the map is not used, never read as "did not move"
@@ -82,7 +83,21 @@ bool rawSectorCaps(const uint16_t *wire_cm, uint16_t min_cm, uint16_t max_cm, co
 		return false;
 	}
 
+	// a cap that is not a finite number >= 0 allows nothing, and an angle that is not a number, or not
+	// beyond the forward class, makes no exception at all (fail closed)
+	const float unclaimed_cap = (std::isfinite(unclaimed_cap_m_s) && unclaimed_cap_m_s > 0.f) ? unclaimed_cap_m_s : 0.f;
+	const bool unclaimed_usable = std::isfinite(unclaimed_start_deg) && unclaimed_start_deg > kForwardClassDeg;
+
 	for (std::size_t i = 0; i < kSectorCount; ++i) {
+		const float bearing_deg = sectorBearingDeg(i);
+
+		if (unclaimed_usable && wire_cm[i] == UINT16_MAX && bearing_deg > unclaimed_start_deg) {
+			caps[i] = unclaimed_cap;
+			valid[i] = true;
+			continue;
+		}
+
+		const StoppingParams &stopping = (bearing_deg <= kForwardClassDeg) ? forward : side;
 		caps[i] = sectorSpeedCap(wire_cm[i], min_cm, max_cm, travelledTowardSector(inputs, i), stopping);
 		valid[i] = (wire_cm[i] != UINT16_MAX);
 	}

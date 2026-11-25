@@ -66,6 +66,8 @@ namespace
 // motion (cap 0, product of the order of 1e-16) from counting as exceeded.
 constexpr float kToleranceM_s{1e-4f};
 
+constexpr float kDegToRad{3.14159265358979323846f / 180.f};
+
 // cos and sin of half a sector (2.5 degrees): sectors are centred on their bearing (ICD-CP-03)
 constexpr float kHalfSectorCos{9.990482216e-01f};
 constexpr float kHalfSectorSin{4.361938737e-02f};
@@ -144,6 +146,15 @@ inline bool inCorridor(const float dir_n, const float dir_e, const float u_n, co
 	const float sin_edge = sin_angle * kHalfSectorCos - cos_angle * kHalfSectorSin; // the nearest edge
 	const float offset_m = distance_m * (sin_edge > 0.f ? sin_edge : 0.f);
 	return !(offset_m > clearance_m);
+}
+
+// True when the unit direction (dir_n, dir_e) is more than the angle whose cosine is cos_limit from the
+// nose (nose_n, nose_e). A nose or a limit that is not a number gives true (fail closed). The tolerance is
+// numerical only: a direction exactly at the limit stays inside, as the class definition says.
+inline bool beyondAngle(const float dir_n, const float dir_e, const float nose_n, const float nose_e,
+			const float cos_limit)
+{
+	return !(dir_n * nose_n + dir_e * nose_e >= cos_limit - 1e-6f);
 }
 
 // Fail closed, like the sample age of the state machine: no constraint, a limit that is not a positive
@@ -264,8 +275,36 @@ HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstra
 		}
 	}
 
-	if (result.active_sector == kNoSector) {
-		return result; // no sector limits the setpoint: it and the feed-forward are unchanged
+	// SYS-CP-031: the speed lock and the unclaimed directions, judged against the current heading. The
+	// current velocity counts only while it is faster than the lock: slower, it is within the lock already,
+	// and at hover its direction is noise.
+	const float lock_m_s = (std::isfinite(context.side_speed_m_s) && context.side_speed_m_s > 0.f)
+			       ? context.side_speed_m_s : 0.f;
+	const float nose_n = cosf(context.heading_rad);
+	const float nose_e = sinf(context.heading_rad);
+	const bool vel_counts = has_vel_dir && speed_now > lock_m_s;
+	const float forward_cos = cosf(kForwardClassDeg * kDegToRad);
+	const bool unclaimed_usable = std::isfinite(context.unclaimed_start_deg)
+				      && context.unclaimed_start_deg > kForwardClassDeg && context.unclaimed_start_deg <= 180.f;
+	const float unclaimed_cos = unclaimed_usable ? cosf(context.unclaimed_start_deg * kDegToRad) : forward_cos;
+
+	const bool locked = beyondAngle(sp_dir[0], sp_dir[1], nose_n, nose_e, forward_cos)
+			    || (vel_counts && beyondAngle(vel_dir[0], vel_dir[1], nose_n, nose_e, forward_cos));
+
+	if (beyondAngle(sp_dir[0], sp_dir[1], nose_n, nose_e, unclaimed_cos)
+	    || (vel_counts && beyondAngle(vel_dir[0], vel_dir[1], nose_n, nose_e, unclaimed_cos))) {
+		result.reason_flags |= kReasonUnclaimedDirection;
+	}
+
+	// the lock scales the vector like a cap would, so the direction is kept; it then sets the scale
+	const bool lock_sets_scale = locked && (speed_in * scale - lock_m_s > kToleranceM_s);
+
+	if (lock_sets_scale) {
+		scale = lock_m_s / speed_in;
+		result.active_sector = kNoSector;
+
+	} else if (result.active_sector == kNoSector) {
+		return result; // nothing limits the setpoint: it and the feed-forward are unchanged
 	}
 
 	// only the speed changes, never the direction (no sliding, ADR 0025)

@@ -67,6 +67,25 @@ StoppingParams fixtureStopping()
 	return StoppingParams{3.f, 4.f, 0.1f, 2.f, 12.f};
 }
 
+// the side class: the same model with a lower braking acceleration (the X500 bench 1.2 m/s^2, a fixture here)
+StoppingParams fixtureSide()
+{
+	StoppingParams side = fixtureStopping();
+	side.a_brake_m_s2 = 1.2f;
+	return side;
+}
+
+constexpr float kNoUnclaimedDeg{180.f};  // no sector is outside the claim
+constexpr float kUnclaimedDeg{134.6f};   // the X500 bench start of the unclaimed bearings (fixture)
+constexpr float kLockM_s{5.f};           // the X500 bench speed lock (fixture)
+
+// one class everywhere and no unclaimed bearing: the caps as they were before the direction classes
+bool oneClassCaps(const uint16_t *wire_cm, const TravelInputs &in, SectorCaps &caps, SectorFlags &valid)
+{
+	return rawSectorCaps(wire_cm, kMinCm, kMaxCm, in, fixtureStopping(), fixtureStopping(), kNoUnclaimedDeg, 0.f, caps,
+			     valid);
+}
+
 TravelInputs inputs(float north, float east, float age_s, float heading_rad = 0.f)
 {
 	return TravelInputs{true, north, east, true, heading_rad, age_s, kBound};
@@ -203,8 +222,8 @@ TEST(RawSectorCapsTest, AMovingVehicleHasLessUsableRangeThanAStationaryOneAtAgeZ
 	SectorCaps at_rest{};
 	SectorFlags valid{};
 
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(8.f, 0.f, 0.5f), fixtureStopping(), moving, valid));
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 0.f, 0.f), fixtureStopping(), at_rest, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(8.f, 0.f, 0.5f), moving, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(0.f, 0.f, 0.f), at_rest, valid));
 
 	// ahead the range is 10 - 8 * 0.5 - 0.375 = 5.625 m; at rest and age 0 it is the full 10 m
 	EXPECT_LT(moving[0], at_rest[0]);
@@ -223,7 +242,7 @@ TEST(RawSectorCapsTest, TheCapsFollowTheRotationByTheHeading)
 	SectorFlags valid{};
 	const float east = static_cast<float>(kPi / 2.0);
 
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 8.f, 0.5f, east), fixtureStopping(), caps, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(0.f, 8.f, 0.5f, east), caps, valid));
 
 	for (std::size_t i = 1; i < kSectorCount; ++i) {
 		EXPECT_LE(caps[0], caps[i]) << i; // forward at this heading is the direction of travel
@@ -236,7 +255,7 @@ TEST(RawSectorCapsTest, ALargeAgeTakesTheWholeRangeEvenOfAClearSector)
 	SectorCaps caps{};
 	SectorFlags valid{};
 
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(4.f, 0.f, 20.f), fixtureStopping(), caps, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(4.f, 0.f, 20.f), caps, valid));
 	EXPECT_NEAR(caps[0], 0.f, 1e-6f);   // 40 m of travel is more than the 40 m of range plus the margin
 	EXPECT_NEAR(caps[36], 0.f, 1e-6f);  // the allowance alone is 600 m
 	EXPECT_TRUE(valid[0]);              // known, but with no usable range
@@ -251,7 +270,7 @@ TEST(RawSectorCapsTest, AnAgeSoLargeThatTheDistanceOverflowsStillTakesTheWholeRa
 
 	const float huge = 1e30f;
 	EXPECT_TRUE(std::isfinite(travelledTowardSector(inputs(4.f, 0.f, huge), 0)));
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(4.f, 0.f, huge), fixtureStopping(), caps, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(4.f, 0.f, huge), caps, valid));
 
 	for (std::size_t i = 0; i < kSectorCount; ++i) {
 		EXPECT_NEAR(caps[i], 0.f, 1e-9f) << i;
@@ -264,7 +283,7 @@ TEST(RawSectorCapsTest, AZeroAgeAndAStationaryVehicleChangeNothing)
 	SectorCaps caps{};
 	SectorFlags valid{};
 
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(12.f, 0.f, 0.f), fixtureStopping(), caps, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(12.f, 0.f, 0.f), caps, valid));
 
 	for (std::size_t i = 0; i < kSectorCount; ++i) {
 		EXPECT_NEAR(caps[i], sectorSpeedCap(1000U, kMinCm, kMaxCm, 0.f, fixtureStopping()), 1e-6f) << i;
@@ -280,7 +299,7 @@ TEST(RawSectorCapsTest, TheWireValuesKeepTheirMeaning)
 	SectorCaps caps{};
 	SectorFlags valid{};
 
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(1.f, 0.f, 0.1f), fixtureStopping(), caps, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(1.f, 0.f, 0.1f), caps, valid));
 	EXPECT_NEAR(caps[1], 0.f, 1e-9f);
 	EXPECT_FALSE(valid[1]);
 	EXPECT_NEAR(caps[2], 0.f, 1e-9f);
@@ -307,7 +326,7 @@ TEST(RawSectorCapsTest, AnUnusableInputMakesTheWholeMapUnknown)
 		caps.fill(12.f);
 		valid.fill(true);
 
-		EXPECT_FALSE(rawSectorCaps(map.wire, kMinCm, kMaxCm, in, fixtureStopping(), caps, valid));
+		EXPECT_FALSE(oneClassCaps(map.wire, in, caps, valid));
 
 		for (std::size_t i = 0; i < kSectorCount; ++i) {
 			EXPECT_NEAR(caps[i], 0.f, 1e-9f) << i;
@@ -334,7 +353,7 @@ TEST(RawSectorCapsTest, AHeadingResetInTheHistoryMakesTheMapUnknown)
 	TravelInputs in = inputs(5.f, 0.f, 0.4f);
 	in.heading_valid = across.valid();
 	in.heading_rad = across.heading_rad;
-	EXPECT_FALSE(rawSectorCaps(map.wire, kMinCm, kMaxCm, in, fixtureStopping(), caps, valid));
+	EXPECT_FALSE(oneClassCaps(map.wire, in, caps, valid));
 	EXPECT_NEAR(caps[0], 0.f, 1e-9f);
 	EXPECT_FALSE(valid[0]);
 
@@ -343,7 +362,7 @@ TEST(RawSectorCapsTest, AHeadingResetInTheHistoryMakesTheMapUnknown)
 	ASSERT_TRUE(after.valid());
 	in.heading_valid = after.valid();
 	in.heading_rad = after.heading_rad;
-	EXPECT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, in, fixtureStopping(), caps, valid));
+	EXPECT_TRUE(oneClassCaps(map.wire, in, caps, valid));
 	EXPECT_GT(caps[0], 0.f);
 }
 
@@ -363,7 +382,7 @@ TEST(RawSectorCapsTest, AMapOutsideTheHistoryIsUnknownAsBefore)
 		TravelInputs in = inputs(0.f, 0.f, 0.4f);
 		in.heading_valid = heading.valid();
 		in.heading_rad = heading.heading_rad;
-		EXPECT_FALSE(rawSectorCaps(map.wire, kMinCm, kMaxCm, in, fixtureStopping(), caps, valid));
+		EXPECT_FALSE(oneClassCaps(map.wire, in, caps, valid));
 		EXPECT_NEAR(caps[0], 0.f, 1e-9f);
 		EXPECT_FALSE(valid[0]);
 	}
@@ -377,7 +396,128 @@ TEST(RawSectorCapsTest, AnInvalidInterfaceValueStaysZero)
 	SectorCaps caps{};
 	SectorFlags valid{};
 
-	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(1.f, 0.f, 0.1f), fixtureStopping(), caps, valid));
+	ASSERT_TRUE(oneClassCaps(map.wire, inputs(1.f, 0.f, 0.1f), caps, valid));
 	EXPECT_NEAR(caps[0], 0.f, 1e-9f);
 	EXPECT_NEAR(caps[1], 0.f, 1e-9f);
+}
+
+TEST(DirectionClassTest, TheSectorBearingIsTheAngleFromTheNose)
+{
+	EXPECT_EQ(sectorBearingDeg(0), 0.f);
+	EXPECT_EQ(sectorBearingDeg(9), 45.f);
+	EXPECT_EQ(sectorBearingDeg(10), 50.f);
+	EXPECT_EQ(sectorBearingDeg(36), 180.f);
+	EXPECT_EQ(sectorBearingDeg(63), 45.f);
+	EXPECT_EQ(sectorBearingDeg(62), 50.f);
+	EXPECT_EQ(sectorBearingDeg(71), 5.f);
+}
+
+TEST(DirectionClassTest, EachClassUsesItsOwnStoppingModelAndTheBoundaryIsForward)
+{
+	// SYS-CP-028: within 45 degrees of the nose the forward model, beyond it the side model
+	Map map(1000U);
+	SectorCaps caps{};
+	SectorFlags valid{};
+	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 0.f, 0.f), fixtureStopping(), fixtureSide(),
+				  kNoUnclaimedDeg, 0.f, caps, valid));
+
+	const float forward = sectorSpeedCap(1000U, kMinCm, kMaxCm, 0.f, fixtureStopping());
+	const float side = sectorSpeedCap(1000U, kMinCm, kMaxCm, 0.f, fixtureSide());
+	ASSERT_LT(side, forward);
+
+	for (std::size_t i = 0; i < kSectorCount; ++i) {
+		const bool in_forward = (i <= 9U) || (i >= 63U);
+		EXPECT_NEAR(caps[i], in_forward ? forward : side, 1e-6f) << i;
+		EXPECT_TRUE(valid[i]) << i;
+	}
+}
+
+TEST(DirectionClassTest, TheCapsDoNotFallWithRangeInEitherClass)
+{
+	// a farther obstacle never gives a lower cap, in each class
+	const std::size_t sectors[] = {0U, 9U, 10U, 18U, 36U, 62U};
+
+	for (const std::size_t sector : sectors) {
+		float previous = 0.f;
+
+		for (uint16_t range_cm = kMinCm; range_cm <= kMaxCm; range_cm = static_cast<uint16_t>(range_cm + 7U)) {
+			Map map(range_cm);
+			SectorCaps caps{};
+			SectorFlags valid{};
+			ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 0.f, 0.f), fixtureStopping(), fixtureSide(),
+						  kUnclaimedDeg, kLockM_s, caps, valid));
+			EXPECT_GE(caps[sector], previous) << sector << " at " << range_cm;
+			previous = caps[sector];
+		}
+	}
+}
+
+TEST(DirectionClassTest, AnUnclaimedSectorWithNoEvidenceHasTheLockAsItsCap)
+{
+	// SYS-CP-031 b: beyond 134.6 degrees a sector with no evidence is capped at the lock, not at 0, and
+	// counts as valid so the limiter may raise it; inside the claim no evidence stays 0
+	Map map(kUnknown);
+	SectorCaps caps{};
+	SectorFlags valid{};
+	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 0.f, 0.f), fixtureStopping(), fixtureSide(),
+				  kUnclaimedDeg, kLockM_s, caps, valid));
+
+	for (std::size_t i = 0; i < kSectorCount; ++i) {
+		const bool unclaimed = (i >= 27U) && (i <= 45U); // centres 135 to 225 degrees
+		EXPECT_NEAR(caps[i], unclaimed ? kLockM_s : 0.f, 1e-9f) << i;
+		EXPECT_EQ(valid[i], unclaimed) << i;
+	}
+}
+
+TEST(DirectionClassTest, AnUnclaimedSectorWithEvidenceIsCappedByTheSideModel)
+{
+	// a confirmed obstacle behind still limits through the cap law, and too close still gives 0
+	Map map(1000U);
+	map.wire[35] = 0U;
+	map.wire[37] = 300U;
+	SectorCaps caps{};
+	SectorFlags valid{};
+	ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 0.f, 0.f), fixtureStopping(), fixtureSide(),
+				  kUnclaimedDeg, kLockM_s, caps, valid));
+
+	EXPECT_NEAR(caps[36], sectorSpeedCap(1000U, kMinCm, kMaxCm, 0.f, fixtureSide()), 1e-6f);
+	EXPECT_NEAR(caps[35], 0.f, 1e-9f);
+	EXPECT_NEAR(caps[37], sectorSpeedCap(300U, kMinCm, kMaxCm, 0.f, fixtureSide()), 1e-6f);
+	EXPECT_LT(caps[37], kLockM_s); // 3 m behind allows less than the lock
+}
+
+TEST(DirectionClassTest, AnUnusableUnclaimedAngleOrCapNeverAllowsMore)
+{
+	Map map(kUnknown);
+
+	for (const float angle : {kNaN, 180.f, 181.f, kInf, -1.f, 0.f, 45.f, -kInf}) {
+		SectorCaps caps{};
+		SectorFlags valid{};
+		ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 0.f, 0.f), fixtureStopping(), fixtureSide(),
+					  angle, kLockM_s, caps, valid));
+		EXPECT_NEAR(caps[36], 0.f, 1e-9f) << angle;
+		EXPECT_FALSE(valid[36]) << angle;
+	}
+
+	for (const float cap : {kNaN, -1.f, 0.f, -kInf}) {
+		SectorCaps caps{};
+		SectorFlags valid{};
+		ASSERT_TRUE(rawSectorCaps(map.wire, kMinCm, kMaxCm, inputs(0.f, 0.f, 0.f), fixtureStopping(), fixtureSide(),
+					  kUnclaimedDeg, cap, caps, valid));
+		EXPECT_NEAR(caps[36], 0.f, 1e-9f) << cap;
+	}
+}
+
+TEST(DirectionClassTest, AnUnusableInputStillMakesTheUnclaimedSectorsUnknown)
+{
+	// the exception is for a sector with no evidence in a usable map, never for an unusable map
+	Map map(kUnknown);
+	TravelInputs in = inputs(0.f, 0.f, 0.f);
+	in.velocity_valid = false;
+	SectorCaps caps{};
+	SectorFlags valid{};
+	EXPECT_FALSE(rawSectorCaps(map.wire, kMinCm, kMaxCm, in, fixtureStopping(), fixtureSide(), kUnclaimedDeg, kLockM_s,
+				   caps, valid));
+	EXPECT_NEAR(caps[36], 0.f, 1e-9f);
+	EXPECT_FALSE(valid[36]);
 }
