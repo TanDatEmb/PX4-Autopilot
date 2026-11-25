@@ -66,6 +66,10 @@ namespace
 // motion (cap 0, product of the order of 1e-16) from counting as exceeded.
 constexpr float kToleranceM_s{1e-4f};
 
+// Setpoint speed above which its direction is reported as unclaimed (owner, 2026-11-25). At hover the
+// setpoint is noise with a random direction (at most 0.02 m/s in SITL). It gates the report only, no limit.
+constexpr float kReportMinSpeedM_s{0.2f};
+
 constexpr float kDegToRad{3.14159265358979323846f / 180.f};
 
 // cos and sin of half a sector (2.5 degrees): sectors are centred on their bearing (ICD-CP-03)
@@ -291,7 +295,7 @@ HookResult limitHorizontalSetpoint(const HookContext &context, const HookConstra
 	const bool locked = beyondAngle(sp_dir[0], sp_dir[1], nose_n, nose_e, forward_cos)
 			    || (vel_counts && beyondAngle(vel_dir[0], vel_dir[1], nose_n, nose_e, forward_cos));
 
-	if (beyondAngle(sp_dir[0], sp_dir[1], nose_n, nose_e, unclaimed_cos)
+	if ((speed_in > kReportMinSpeedM_s && beyondAngle(sp_dir[0], sp_dir[1], nose_n, nose_e, unclaimed_cos))
 	    || (vel_counts && beyondAngle(vel_dir[0], vel_dir[1], nose_n, nose_e, unclaimed_cos))) {
 		result.reason_flags |= kReasonUnclaimedDirection;
 	}

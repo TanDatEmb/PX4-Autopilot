@@ -760,6 +760,15 @@ TEST(SetpointLimiterTest, AnUnclaimedDirectionIsReportedAndLimitsNothingMore)
 		EXPECT_EQ(r.reason_flags & cp_brake::kReasonUnclaimedDirection, 0U) << deg;
 	}
 
+	// at or below 0.2 m/s the setpoint direction is hover noise and is not reported; above it, it is
+	for (const float speed : {0.02f, 0.19f, 0.21f, 1.f}) {
+		float slow[2] = {-speed, 0.f};
+		float acc[2] = {NAN, NAN};
+		const cp_brake::HookResult r = cp_brake::limitHorizontalSetpoint(classContext(0.f), c, kHover, slow, acc);
+		EXPECT_EQ((r.reason_flags & cp_brake::kReasonUnclaimedDirection) != 0U, speed > 0.2f) << speed;
+		EXPECT_NEAR(slow[0], -speed, 1e-6f) << speed; // the report limits nothing
+	}
+
 	// a forward setpoint while the vehicle still moves backward faster than the lock: reported and locked
 	const float backward[2] = {-6.f, 0.f};
 	float vel[2] = {8.f, 0.f};

@@ -110,7 +110,9 @@ PARAM_DEFINE_FLOAT(CPB_V_SIDE, -1.f);
  * Angle from the nose beyond which the horizon is never in the field of view at level, so obstacles
  * below the sensor are not seen and the direction is outside the claim (SYS-CP-031 b): a sector there
  * with no evidence has the cap CPB_V_SIDE instead of 0, and the hook reports the motion
- * (REASON_UNCLAIMED_DIRECTION). It must match the rear class of the obstacle map (rear_start_rad).
+ * (REASON_UNCLAIMED_DIRECTION, for a setpoint faster than 0.2 m/s). The map's rear_start_rad, beyond
+ * which a sector needs only the upper half of the height band, is a separate value and must not be
+ * larger than this one.
  * 134.6 degrees for the X500 bench mount pitched 10 degrees down (approved 2026-11-22); 180 leaves no
  * unclaimed bearing. Above 45. Platform value: -1 means not set, and cp_brake reports an invalid
  * configuration instead of running.

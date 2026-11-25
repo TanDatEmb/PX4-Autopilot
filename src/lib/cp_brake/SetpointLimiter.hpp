@@ -67,10 +67,11 @@
  *   never a sector cap, so the forward class is not limited by it. When the lock sets the scale the
  *   result is kLimited with no active sector. A heading that is not a usable number locks every
  *   direction, and a lock speed that is not a usable number locks at 0 (fail closed).
- * - Unclaimed direction (SYS-CP-031 b): when the setpoint, or the current velocity while it is faster
- *   than CPB_V_SIDE, points more than CPB_REAR_ANG from the nose, the result carries
- *   kReasonUnclaimedDirection (the pilot is told; nothing more is limited by it). An angle that is
- *   not a usable number counts every direction outside the forward class as unclaimed.
+ * - Unclaimed direction (SYS-CP-031 b): when the setpoint, while faster than 0.2 m/s (below it the
+ *   direction is hover noise), or the current velocity while it is faster than CPB_V_SIDE, points more
+ *   than CPB_REAR_ANG from the nose, the result carries kReasonUnclaimedDirection (the pilot is told;
+ *   nothing more is limited by it). An angle that is not a usable number counts every direction outside
+ *   the forward class as unclaimed.
  */
 
 #pragma once
