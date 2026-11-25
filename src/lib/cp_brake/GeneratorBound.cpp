@@ -58,12 +58,13 @@ GeneratorBound generatorSpeedBound(const HookContext &context, const HookConstra
 	// that is still above the top speed must be seen while the generator accelerates toward it, or it is found
 	// only when it drops below, with the full acceleration still to ramp down.
 	const float probe_m_s = fmaxf(speed_max_m_s, fmaxf(forward.max_speed_m_s, side.max_speed_m_s));
+
+	// the rule as the hook applies it, speed lock included
 	float vel_sp[2];
 	vel_sp[0] = probe_m_s * dir_ned[0];
 	vel_sp[1] = probe_m_s * dir_ned[1];
 	float acc_sp[2] = {NAN, NAN};
 	const HookResult result = limitHorizontalSetpoint(context, constraint, vel_ned_m_s, vel_sp, acc_sp);
-	const float allowed = sqrtf(vel_sp[0] * vel_sp[0] + vel_sp[1] * vel_sp[1]);
 
 	if (result.action == HookAction::kSafeStop) {
 		return GeneratorBound{true, 0.f, forward.a_brake_m_s2, forward.jerk_m_s3};
@@ -73,26 +74,47 @@ GeneratorBound generatorSpeedBound(const HookContext &context, const HookConstra
 		return GeneratorBound{false, speed_max_m_s, 0.f, 0.f};
 	}
 
+	GeneratorBound bound{false, speed_max_m_s, 0.f, 0.f};
+
 	if (result.active_sector >= kSectorCount) {
-		// the speed lock (SYS-CP-031) binds: it is a class limit outside the forward class and does not fall
-		return GeneratorBound{true, allowed, side.a_brake_m_s2, side.jerk_m_s3};
+		// the speed lock (SYS-CP-031) binds: a class limit outside the forward class that does not fall
+		bound = GeneratorBound{true, sqrtf(vel_sp[0] * vel_sp[0] + vel_sp[1] * vel_sp[1]), side.a_brake_m_s2, side.jerk_m_s3};
 	}
 
-	const std::size_t sector = result.active_sector;
+	// The obstacles alone, with the lock out of reach: the hook reports only the tighter of the two, so without this
+	// the obstacle bound and its margin would appear only when the obstacle overtakes the lock, a step of the margin.
+	HookContext obstacles_only = context;
+	obstacles_only.side_speed_m_s = probe_m_s;
+	vel_sp[0] = probe_m_s * dir_ned[0];
+	vel_sp[1] = probe_m_s * dir_ned[1];
+	acc_sp[0] = NAN;
+	acc_sp[1] = NAN;
+	const HookResult obstacle = limitHorizontalSetpoint(obstacles_only, constraint, vel_ned_m_s, vel_sp, acc_sp);
+
+	if (obstacle.action != HookAction::kLimited || obstacle.active_sector >= kSectorCount) {
+		return bound;
+	}
+
+	const std::size_t sector = obstacle.active_sector;
 	const StoppingParams &model = (sectorBearingDeg(sector) <= kForwardClassDeg) ? forward : side;
 	const float raw_cap = constraint.caps_m_s[sector];
 	const float cap = (std::isfinite(raw_cap) && raw_cap >= 0.f) ? raw_cap : 0.f;
 	const float slope = (stoppingDistance(cap + kSlopeStepM_s, model) - stoppingDistance(cap, model)) / kSlopeStepM_s;
+	float speed = 0.f; // no usable model: fail closed
 
-	if (!std::isfinite(slope) || !(slope > 0.f) || !(model.jerk_m_s3 > 0.f)) {
-		return GeneratorBound{true, 0.f, model.a_brake_m_s2, model.jerk_m_s3}; // no usable model: fail closed
+	if (std::isfinite(slope) && (slope > 0.f) && (model.jerk_m_s3 > 0.f)) {
+		// the cap of the sector falls by dc/dD = 1 / slope per metre, and the generator closes on it at allowed m/s
+		const float allowed = sqrtf(vel_sp[0] * vel_sp[0] + vel_sp[1] * vel_sp[1]);
+		const float rate = allowed / slope;
+		const float margin = rate * rate / model.jerk_m_s3; // twice the lag rate^2 / (2 J)
+		speed = (allowed - margin > 0.f) ? allowed - margin : 0.f;
 	}
 
-	// the cap of the sector falls by dc/dD = 1 / slope per metre, and the generator closes on it at allowed m/s
-	const float rate = allowed / slope;
-	const float margin = rate * rate / model.jerk_m_s3; // twice the lag rate^2 / (2 J)
-	const float speed = allowed - margin;
-	return GeneratorBound{true, speed > 0.f ? speed : 0.f, model.a_brake_m_s2, model.jerk_m_s3};
+	if (!bound.limited || speed < bound.speed_m_s) {
+		bound = GeneratorBound{true, speed, model.a_brake_m_s2, model.jerk_m_s3};
+	}
+
+	return bound;
 }
 
 float boundAcceleration(const float speed_m_s, const float bound_m_s, const float jerk_m_s3, const float brake_m_s2,

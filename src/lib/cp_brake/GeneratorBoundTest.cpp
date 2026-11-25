@@ -188,6 +188,21 @@ TEST(GeneratorBound, SpeedLockHasNoLagMargin)
 	EXPECT_FLOAT_EQ(b.brake_m_s2, 1.2f);
 }
 
+// The lock binds first while an obstacle cap is still above it; the obstacle bound with its margin must already be
+// there, or the bound steps down by the margin when the obstacle takes over (seen in SITL: the hook cut 1 m/s).
+TEST(GeneratorBound, LockToObstacleHandOverIsContinuous)
+{
+	const float dir[2] = {0.f, 1.f};
+	const float cap = 5.2f; // just above the 5 m/s lock
+	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(classContext(),
+					   wall(18, cap, cp_brake::stoppingDistance(cap, kSide)), kHover, dir, 10.f, kForward, kSide);
+	ASSERT_TRUE(b.limited);
+	const float rate = cap / slope(cap, kSide);
+	EXPECT_NEAR(b.speed_m_s, cap - rate * rate / 4.f, 1e-3f);
+	EXPECT_LT(b.speed_m_s, 5.f);
+	EXPECT_FLOAT_EQ(b.brake_m_s2, 1.2f);
+}
+
 TEST(GeneratorBound, AccelerationReachesTheBoundWithoutOvershoot)
 {
 	// below the bound the acceleration may only be as large as a jerk-limited ramp-down allows
