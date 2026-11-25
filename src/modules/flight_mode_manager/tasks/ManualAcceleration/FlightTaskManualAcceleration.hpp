@@ -34,6 +34,8 @@
 #pragma once
 
 #include <lib/weather_vane/WeatherVane.hpp>
+#include <uORB/Subscription.hpp>
+#include <uORB/topics/cp_brake_hook.h>
 #include "FlightTaskManualAltitudeSmoothVel.hpp"
 #include "StickAccelerationXY.hpp"
 
@@ -51,6 +53,7 @@ protected:
 
 	StickAccelerationXY _stick_acceleration_xy{this};
 	WeatherVane _weathervane{this}; /**< weathervane library, used to implement a yaw control law that turns the vehicle nose into the wind */
+	uORB::SubscriptionData<cp_brake_hook_s> _cp_brake_hook_sub{ORB_ID(cp_brake_hook)}; /**< what the collision limiter did */
 
 	DEFINE_PARAMETERS_CUSTOM_PARENT(FlightTask,
 					(ParamFloat<px4::params::MPC_VEL_MANUAL>) _param_mpc_vel_manual,

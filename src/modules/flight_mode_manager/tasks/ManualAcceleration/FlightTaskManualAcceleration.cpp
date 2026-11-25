@@ -81,6 +81,19 @@ bool FlightTaskManualAcceleration::update()
 		_stick_acceleration_xy.setVelocityConstraint(vehicle_local_pos.vxy_max);
 	}
 
+	// Collision prevention (cp_brake) limits the velocity setpoint after this task, in mc_pos_control. While it
+	// holds it back, integrate the stick from what it let through (the velocity setpoint feedback), so the
+	// setpoint does not wind up behind the limit and a pull away takes effect at once. Only in velocity mode: with
+	// the position locked the feedback holds the position correction, and taking it over would release the lock.
+	_cp_brake_hook_sub.update();
+	const cp_brake_hook_s &hook = _cp_brake_hook_sub.get();
+	const bool limited = (hook.action == cp_brake_hook_s::ACTION_LIMITED || hook.action == cp_brake_hook_s::ACTION_SAFE_STOP)
+			     && hrt_elapsed_time(&hook.timestamp) < _timeout;
+
+	if (limited && !Vector2f(_position_setpoint).isAllFinite()) {
+		_stick_acceleration_xy.resetVelocity(_velocity_setpoint_feedback.xy()); // ignored when not finite
+	}
+
 	_stick_acceleration_xy.generateSetpoints(_sticks.getPitchRollExpo(), _yaw, _yaw_setpoint, _position,
 			_velocity_setpoint_feedback.xy(), _deltatime);
 	_stick_acceleration_xy.getSetpoints(_position_setpoint, _velocity_setpoint, _acceleration_setpoint);
