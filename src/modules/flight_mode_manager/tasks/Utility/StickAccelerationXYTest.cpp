@@ -46,6 +46,7 @@
 #include <uORB/Publication.hpp>
 #include <uORB/topics/cp_brake_constraints.h>
 #include <uORB/topics/takeoff_status.h>
+#include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_status.h>
 
 #include <GeneratorBound.hpp>
@@ -144,11 +145,24 @@ protected:
 	uORB::Publication<cp_brake_constraints_s> _constraints_pub{ORB_ID(cp_brake_constraints)};
 	uORB::Publication<takeoff_status_s> _takeoff_pub{ORB_ID(takeoff_status)};
 	uORB::Publication<vehicle_status_s> _status_pub{ORB_ID(vehicle_status)};
+	uORB::Publication<vehicle_local_position_s> _local_pos_pub{ORB_ID(vehicle_local_position)};
 };
 
 const cp_brake::StoppingParams kForward{3.f, 4.f, 0.95f, 2.f, 12.f};
 
 } // namespace
+
+// Must run first: the uORB topic of the constraint persists across the tests of this process.
+// With CP on and in flight but no constraint received yet, the hook safe-stops (stale), so the generator must not
+// wind up behind it either (ADR 0026 decision 2).
+TEST_F(StickAccelerationXYTest, NoConstraintYetHoldsLikeTheHook)
+{
+	StickAccelerationXY generator{nullptr};
+
+	for (int k = 0; k < 100; ++k) {
+		EXPECT_LE(step(generator, Vector2f(1.f, 0.f)).norm(), 1e-3f) << "step " << k;
+	}
+}
 
 // SYS-CP-006: with CP off the generator is PX4's, and a clear constraint changes nothing either
 TEST_F(StickAccelerationXYTest, CpOffAndClearConstraintAreUnbounded)
@@ -228,4 +242,26 @@ TEST_F(StickAccelerationXYTest, StaleBrakesAtClassRate)
 	}
 
 	EXPECT_LT(_vel_sp.norm(), 0.05f);
+}
+
+// The hook's second corridor ray is the vehicle's measured velocity: an obstacle off the setpoint corridor but on the
+// vehicle's path must bound the generator as it limits the hook (same inputs as the hook).
+TEST_F(StickAccelerationXYTest, VehicleVelocityRayCountsLikeTheHook)
+{
+	publishWall(4, 1.f, 20.f); // 20 deg right of the nose, 20 m away: 6 m off the north corridor, on a 20 deg path
+	vehicle_local_position_s lpos{};
+	lpos.timestamp = hrt_absolute_time();
+	lpos.v_xy_valid = true;
+	lpos.vx = 3.f * cosf(0.349066f);
+	lpos.vy = 3.f * sinf(0.349066f);
+	_local_pos_pub.publish(lpos);
+	StickAccelerationXY generator{nullptr};
+	float top = 0.f;
+
+	for (int k = 0; k < 300; ++k) {
+		top = fmaxf(top, step(generator, Vector2f(1.f, 0.f)).norm());
+	}
+
+	// along the sector the setpoint may carry at most the cap: |v| cos(20 deg) <= 1
+	EXPECT_LE(top * cosf(0.349066f), 1.f + 1e-3f);
 }

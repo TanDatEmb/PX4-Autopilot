@@ -46,6 +46,7 @@
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/cp_brake_constraints.h>
 #include <uORB/topics/takeoff_status.h>
+#include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_status.h>
 
 class CpBrakeBound : public ModuleParams
@@ -55,21 +56,20 @@ public:
 	~CpBrakeBound() = default;
 
 	/**
-	 * Speed bound along the unit direction dir (local NED) for a generator at velocity vel_m_s whose fastest speed
-	 * is speed_max_m_s, heading yaw_rad. Not limited while no constraint has been received.
+	 * Speed bound along the unit direction dir (local NED) for a generator whose fastest speed is speed_max_m_s, heading
+	 * yaw_rad. The current velocity the rule needs is the measured one, as in the hook.
 	 */
-	cp_brake::GeneratorBound bound(const matrix::Vector2f &dir, const matrix::Vector2f &vel_m_s, float speed_max_m_s,
-				       float yaw_rad);
+	cp_brake::GeneratorBound bound(const matrix::Vector2f &dir, float speed_max_m_s, float yaw_rad);
 
 private:
+	// members, not locals: this runs deep in the flight-task call chain, on a small work-queue stack
 	uORB::Subscription _constraints_sub{ORB_ID(cp_brake_constraints)};
-	uORB::Subscription _takeoff_status_sub{ORB_ID(takeoff_status)};
-	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::SubscriptionData<takeoff_status_s> _takeoff_status_sub{ORB_ID(takeoff_status)};
+	uORB::SubscriptionData<vehicle_status_s> _vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::SubscriptionData<vehicle_local_position_s> _local_position_sub{ORB_ID(vehicle_local_position)};
 
 	cp_brake_constraints_s _constraints{};
-	cp_brake::HookConstraint _constraint{};
-	bool _in_flight{false};
-	uint8_t _nav_state{0};
+	cp_brake::HookConstraint _constraint{}; ///< present stays false until a message arrives: the limiter then safe-stops
 
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::CPB_EN>) _param_cpb_en,

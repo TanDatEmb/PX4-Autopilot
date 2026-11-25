@@ -40,8 +40,7 @@ CpBrakeBound::CpBrakeBound(ModuleParams *parent) :
 {
 }
 
-cp_brake::GeneratorBound CpBrakeBound::bound(const matrix::Vector2f &dir, const matrix::Vector2f &vel_m_s,
-		const float speed_max_m_s, const float yaw_rad)
+cp_brake::GeneratorBound CpBrakeBound::bound(const matrix::Vector2f &dir, const float speed_max_m_s, const float yaw_rad)
 {
 	// the copy is field by field, as MulticopterPositionControl::updateCollisionLimiter does for the hook
 	if (_constraints_sub.update(&_constraints)) {
@@ -62,33 +61,26 @@ cp_brake::GeneratorBound CpBrakeBound::bound(const matrix::Vector2f &dir, const 
 		_constraint.reason_flags = _constraints.reason_flags;
 	}
 
-	takeoff_status_s takeoff_status;
+	_takeoff_status_sub.update();
+	_vehicle_status_sub.update();
+	_local_position_sub.update();
 
-	if (_takeoff_status_sub.update(&takeoff_status)) {
-		_in_flight = (takeoff_status.takeoff_state == takeoff_status_s::TAKEOFF_STATE_FLIGHT);
-	}
-
-	vehicle_status_s vehicle_status;
-
-	if (_vehicle_status_sub.update(&vehicle_status)) {
-		_nav_state = vehicle_status.nav_state;
-	}
-
-	if (!_constraint.present) {
-		return cp_brake::GeneratorBound{false, speed_max_m_s, 0.f, 0.f};
-	}
-
-	// the enforcement scope of the hook: Position and Mission (owner, 2026-11-19)
-	const bool nav_state_enforced = (_nav_state == vehicle_status_s::NAVIGATION_STATE_POSCTL)
-					|| (_nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION);
-	const cp_brake::HookContext context{_param_cpb_en.get() == 1, _in_flight, nav_state_enforced, hrt_absolute_time(),
+	// the enforcement scope of the hook: Position and Mission (owner, 2026-11-19). A constraint never received is
+	// stale for the limiter, which then safe-stops, as the hook does: no early return here.
+	const uint8_t nav_state = _vehicle_status_sub.get().nav_state;
+	const bool nav_state_enforced = (nav_state == vehicle_status_s::NAVIGATION_STATE_POSCTL)
+					|| (nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION);
+	const bool in_flight = (_takeoff_status_sub.get().takeoff_state == takeoff_status_s::TAKEOFF_STATE_FLIGHT);
+	const cp_brake::HookContext context{_param_cpb_en.get() == 1, in_flight, nav_state_enforced, hrt_absolute_time(),
 					    _param_cpb_cstr_age.get(), yaw_rad, _param_cpb_v_side.get(), _param_cpb_rear_ang.get()};
 	const cp_brake::StoppingParams forward{_param_cpb_a_brk.get(), _param_cpb_jerk.get(), _param_cpb_t_lat.get(),
 					       _param_cpb_margin.get(), _param_cpb_max_v.get()};
 	cp_brake::StoppingParams side = forward;
 	side.a_brake_m_s2 = _param_cpb_a_side.get(); // the side class is the same model with its own braking (SYS-CP-028)
 
-	const float vel[2] = {vel_m_s(0), vel_m_s(1)};
+	// the measured velocity, the hook's second corridor ray; not a number when invalid, which leaves only the first
+	const vehicle_local_position_s &lpos = _local_position_sub.get();
+	const float vel[2] = {lpos.v_xy_valid ? lpos.vx : NAN, lpos.v_xy_valid ? lpos.vy : NAN};
 	const float direction[2] = {dir(0), dir(1)};
 	return cp_brake::generatorSpeedBound(context, _constraint, vel, direction, speed_max_m_s, forward, side);
 }
