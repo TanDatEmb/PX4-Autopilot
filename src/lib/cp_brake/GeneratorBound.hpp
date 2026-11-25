@@ -55,21 +55,30 @@ struct GeneratorBound {
 	float fall_per_m;  ///< [(m/s)/m] how much the bound falls per metre closed on its obstacle, 0 for the lock or none
 };
 
+/** The two bounds a generator follows at once: the lower acceleration of the two laws wins (boundAcceleration). */
+struct GeneratorBounds {
+	GeneratorBound obstacle; ///< the tightest obstacle sector, with its lag margin and fall; not limited when none
+	GeneratorBound lock;     ///< the speed lock of SYS-CP-031, which does not fall; not limited while it is not the lower
+};
+
 /**
- * Speed bound along the unit direction dir (local NED) for a generator whose fastest speed is speed_max_m_s.
+ * Speed bounds along the unit direction dir (local NED) for a generator whose fastest speed is speed_max_m_s.
  *
- * It is the speed the hook would let through in that direction (limitHorizontalSetpoint, same context, constraint
- * and current velocity, probed above every cap so that a bound above the top speed or saturated is reported too),
- * lowered by a lag margin when an obstacle sector binds. A generator that brakes with a limited jerk lags a falling
- * cap by rate^2 / (2 J), rate being how fast the cap falls while the vehicle moves at the bound; the margin is twice
- * that, so the generator settles that far under the cap instead of on it, where the hook would cut. The speed lock
- * does not fall and has no margin. A constraint the hook turns into a safe stop gives 0. Braking uses the stopping
- * model of the class of the sector that binds (forward or side, ADR 0026). follower_jerk_m_s3 is the generator's own
- * jerk limit: when it is below the class jerk the generator follows with it, and the margin is sized with it.
+ * They come from the speed the hook would let through in that direction (limitHorizontalSetpoint, same context,
+ * constraint and current velocity, probed above every cap so that a bound above the top speed or saturated is
+ * reported too). The obstacle bound is evaluated with the lock out of reach and lowered by a lag margin: a generator
+ * that brakes with a limited jerk lags a falling cap by rate^2 / (2 J), rate being how fast the cap falls while the
+ * vehicle moves at the bound; the margin is twice that, so the generator settles that far under the cap instead of on
+ * it, where the hook would cut. The lock is reported apart while it is the lower speed: a higher obstacle bound that
+ * falls can already ask for less acceleration than the still lock, so both laws must act through the hand-over.
+ * A constraint the hook turns into a safe stop gives an obstacle bound of 0. Braking uses the stopping model of the
+ * class of the sector that binds (forward or side, ADR 0026); the lock is a side-class limit. follower_jerk_m_s3 is
+ * the generator's own jerk limit: when it is below the class jerk the generator follows with it, and the margin is
+ * sized with it.
  */
-GeneratorBound generatorSpeedBound(const HookContext &context, const HookConstraint &constraint,
-				   const float vel_ned_m_s[2], const float dir_ned[2], float speed_max_m_s,
-				   const StoppingParams &forward, const StoppingParams &side, float follower_jerk_m_s3);
+GeneratorBounds generatorSpeedBounds(const HookContext &context, const HookConstraint &constraint,
+				     const float vel_ned_m_s[2], const float dir_ned[2], float speed_max_m_s,
+				     const StoppingParams &forward, const StoppingParams &side, float follower_jerk_m_s3);
 
 /**
  * Highest acceleration along the bound direction for a generator at speed_m_s and acceleration accel_m_s2 that

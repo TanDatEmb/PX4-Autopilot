@@ -35,7 +35,6 @@
 
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 
 #include "CapLimiter.hpp"
 #include "StateMachine.hpp"
@@ -131,21 +130,21 @@ TEST(GeneratorBound, UnenforcedRuleNotLimited)
 	const float dir[2] = {1.f, 0.f};
 	cp_brake::HookContext off = openContext();
 	off.enabled = false;
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(off, clearConstraint(), kHover, dir, 10.f, kForward,
-					   kSide, 8.f);
-	EXPECT_FALSE(b.limited);
-	EXPECT_FLOAT_EQ(b.speed_m_s, 10.f);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(off, clearConstraint(), kHover, dir, 10.f, kForward,
+					    kSide, 8.f);
+	EXPECT_FALSE(b.obstacle.limited);
+	EXPECT_FALSE(b.lock.limited);
 }
 
 // A cap at CPB_MAX_V can still fall: its margin is kept, or it appears as a step when the cap first drops (Codex).
 TEST(GeneratorBound, SaturatedCapKeepsItsMargin)
 {
 	const float dir[2] = {1.f, 0.f};
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(openContext(), clearConstraint(), kHover, dir, 12.f,
-					   kForward, kSide, 8.f);
-	ASSERT_TRUE(b.limited);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(openContext(), clearConstraint(), kHover, dir, 12.f,
+					    kForward, kSide, 8.f);
+	ASSERT_TRUE(b.obstacle.limited);
 	const float rate = 12.f / slope(12.f, kForward);
-	EXPECT_NEAR(b.speed_m_s, 12.f - rate * rate / 4.f, 1e-3f);
+	EXPECT_NEAR(b.obstacle.speed_m_s, 12.f - rate * rate / 4.f, 1e-3f);
 }
 
 // The margin is sized with the jerk the generator actually follows with, here a PX4 jerk limit below CPB_JERK (Codex).
@@ -153,12 +152,12 @@ TEST(GeneratorBound, MarginUsesTheFollowerJerk)
 {
 	const float dir[2] = {1.f, 0.f};
 	const float cap = 5.f;
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(openContext(),
-					   wall(0, cap, cp_brake::stoppingDistance(cap, kForward)), kHover, dir, 10.f, kForward, kSide, 2.f);
-	ASSERT_TRUE(b.limited);
-	EXPECT_FLOAT_EQ(b.jerk_m_s3, 2.f);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(openContext(),
+					    wall(0, cap, cp_brake::stoppingDistance(cap, kForward)), kHover, dir, 10.f, kForward, kSide, 2.f);
+	ASSERT_TRUE(b.obstacle.limited);
+	EXPECT_FLOAT_EQ(b.obstacle.jerk_m_s3, 2.f);
 	const float rate = cap / slope(cap, kForward);
-	EXPECT_NEAR(b.speed_m_s, cap - rate * rate / 2.f, 1e-3f);
+	EXPECT_NEAR(b.obstacle.speed_m_s, cap - rate * rate / 2.f, 1e-3f);
 }
 
 TEST(GeneratorBound, StaleConstraintGivesZero)
@@ -166,54 +165,54 @@ TEST(GeneratorBound, StaleConstraintGivesZero)
 	const float dir[2] = {1.f, 0.f};
 	cp_brake::HookConstraint c = clearConstraint();
 	c.timestamp_us = kNowUs - 600000U; // older than the 0.5 s age limit of the context
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(openContext(), c, kHover, dir, 10.f, kForward, kSide, 8.f);
-	EXPECT_TRUE(b.limited);
-	EXPECT_FLOAT_EQ(b.speed_m_s, 0.f);
-	EXPECT_FLOAT_EQ(b.brake_m_s2, 3.f);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(openContext(), c, kHover, dir, 10.f, kForward, kSide, 8.f);
+	EXPECT_TRUE(b.obstacle.limited);
+	EXPECT_FLOAT_EQ(b.obstacle.speed_m_s, 0.f);
+	EXPECT_FLOAT_EQ(b.obstacle.brake_m_s2, 3.f);
 }
 
 TEST(GeneratorBound, WallAheadUsesForwardClassWithLagMargin)
 {
 	const float dir[2] = {1.f, 0.f};
 	const float cap = 5.f;
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(openContext(),
-					   wall(0, cap, cp_brake::stoppingDistance(cap, kForward)), kHover, dir, 10.f, kForward, kSide, 8.f);
-	ASSERT_TRUE(b.limited);
-	EXPECT_FLOAT_EQ(b.brake_m_s2, 3.f);
-	EXPECT_FLOAT_EQ(b.jerk_m_s3, 4.f);
-	EXPECT_NEAR(b.fall_per_m, 1.f / slope(cap, kForward), 1e-4f);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(openContext(),
+					    wall(0, cap, cp_brake::stoppingDistance(cap, kForward)), kHover, dir, 10.f, kForward, kSide, 8.f);
+	ASSERT_TRUE(b.obstacle.limited);
+	EXPECT_FLOAT_EQ(b.obstacle.brake_m_s2, 3.f);
+	EXPECT_FLOAT_EQ(b.obstacle.jerk_m_s3, 4.f);
+	EXPECT_NEAR(b.obstacle.fall_per_m, 1.f / slope(cap, kForward), 1e-4f);
 	const float rate = cap / slope(cap, kForward);
-	EXPECT_NEAR(b.speed_m_s, cap - rate * rate / 4.f, 1e-3f);
-	EXPECT_GT(b.speed_m_s, 0.f);
+	EXPECT_NEAR(b.obstacle.speed_m_s, cap - rate * rate / 4.f, 1e-3f);
+	EXPECT_GT(b.obstacle.speed_m_s, 0.f);
 }
 
 TEST(GeneratorBound, WallBesideUsesSideClass)
 {
 	const float dir[2] = {0.f, 1.f}; // east, 90 degrees right of the nose (heading 0)
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(openContext(),
-					   wall(18, 2.f, cp_brake::stoppingDistance(2.f, kSide)), kHover, dir, 10.f, kForward, kSide, 8.f);
-	ASSERT_TRUE(b.limited);
-	EXPECT_FLOAT_EQ(b.brake_m_s2, 1.2f);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(openContext(),
+					    wall(18, 2.f, cp_brake::stoppingDistance(2.f, kSide)), kHover, dir, 10.f, kForward, kSide, 8.f);
+	ASSERT_TRUE(b.obstacle.limited);
+	EXPECT_FLOAT_EQ(b.obstacle.brake_m_s2, 1.2f);
 }
 
 TEST(GeneratorBound, CapAboveTopSpeedIsStillReported)
 {
 	// a cap of 11 m/s is above the generator's 10 m/s, but the generator must see it coming while it accelerates
 	const float dir[2] = {1.f, 0.f};
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(openContext(),
-					   wall(0, 11.f, cp_brake::stoppingDistance(11.f, kForward)), kHover, dir, 10.f, kForward, kSide, 8.f);
-	EXPECT_TRUE(b.limited);
-	EXPECT_LT(b.speed_m_s, 11.f);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(openContext(),
+					    wall(0, 11.f, cp_brake::stoppingDistance(11.f, kForward)), kHover, dir, 10.f, kForward, kSide, 8.f);
+	EXPECT_TRUE(b.obstacle.limited);
+	EXPECT_LT(b.obstacle.speed_m_s, 11.f);
 }
 
 TEST(GeneratorBound, SpeedLockHasNoLagMargin)
 {
 	const float dir[2] = {0.f, 1.f};
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(classContext(), clearConstraint(), kHover, dir, 10.f,
-					   kForward, kSide, 8.f);
-	ASSERT_TRUE(b.limited);
-	EXPECT_NEAR(b.speed_m_s, 5.f, 1e-4f);
-	EXPECT_FLOAT_EQ(b.brake_m_s2, 1.2f);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(classContext(), clearConstraint(), kHover, dir, 10.f,
+					    kForward, kSide, 8.f);
+	ASSERT_TRUE(b.lock.limited);
+	EXPECT_NEAR(b.lock.speed_m_s, 5.f, 1e-4f);
+	EXPECT_FLOAT_EQ(b.lock.brake_m_s2, 1.2f);
 }
 
 // The lock binds first while an obstacle cap is still above it; the obstacle bound with its margin must already be
@@ -222,13 +221,15 @@ TEST(GeneratorBound, LockToObstacleHandOverIsContinuous)
 {
 	const float dir[2] = {0.f, 1.f};
 	const float cap = 5.2f; // just above the 5 m/s lock
-	const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(classContext(),
-					   wall(18, cap, cp_brake::stoppingDistance(cap, kSide)), kHover, dir, 10.f, kForward, kSide, 8.f);
-	ASSERT_TRUE(b.limited);
+	const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(classContext(),
+					    wall(18, cap, cp_brake::stoppingDistance(cap, kSide)), kHover, dir, 10.f, kForward, kSide, 8.f);
+	ASSERT_TRUE(b.obstacle.limited);
 	const float rate = cap / slope(cap, kSide);
-	EXPECT_NEAR(b.speed_m_s, cap - rate * rate / 4.f, 1e-3f);
-	EXPECT_LT(b.speed_m_s, 5.f);
-	EXPECT_FLOAT_EQ(b.brake_m_s2, 1.2f);
+	EXPECT_NEAR(b.obstacle.speed_m_s, cap - rate * rate / 4.f, 1e-3f);
+	EXPECT_LT(b.obstacle.speed_m_s, 5.f);
+	EXPECT_FLOAT_EQ(b.obstacle.brake_m_s2, 1.2f);
+	ASSERT_TRUE(b.lock.limited);
+	EXPECT_NEAR(b.lock.speed_m_s, 5.f, 1e-4f);
 }
 
 TEST(GeneratorBound, AccelerationReachesTheBoundWithoutOvershoot)
@@ -267,10 +268,30 @@ TEST(GeneratorBound, AccelerationLeavesJerkForAGrowingFall)
 // feed-forward in a normal approach. Caps are held for 60 ms as cp_brake publishes them. At a creep (below
 // 0.5 m/s, a few cm from the stop) a new map may lower the cap a few mm/s under the speed; the hook then clears
 // a feed-forward the vehicle cannot feel, which is what ADR 0026 measures.
-static void straightApproach(const float jerk_limit)
+// the highest acceleration both bounds allow, as StickAccelerationXY applies them
+static float boundedAcceleration(const cp_brake::GeneratorBounds &b, const float v, const float a, const float dt)
+{
+	float a_max = INFINITY;
+
+	for (const cp_brake::GeneratorBound &one : {b.obstacle, b.lock}) {
+		if (one.limited) {
+			a_max = fminf(a_max, cp_brake::boundAcceleration(v, a, one.speed_m_s, one.fall_per_m, one.jerk_m_s3,
+					one.brake_m_s2, dt));
+		}
+	}
+
+	return a_max;
+}
+
+// Full stick toward a wall, ahead (forward class) or to the side at the 5 m/s lock (side class, Codex: the falling
+// obstacle bound must act while the lock is still the lower speed).
+static void approach(const float jerk_limit, const bool sideways)
 {
 	const float dt = 0.02f;
-	const float wall_m = 40.f;
+	const float wall_m = sideways ? 22.f : 40.f;
+	const std::size_t sector = sideways ? 18 : 0;
+	const cp_brake::StoppingParams &model = sideways ? kSide : kForward;
+	const cp_brake::HookContext context = sideways ? classContext() : openContext();
 	const float stick_acc = 6.f; // full stick, 2 x MPC_ACC_HOR
 	float x = 0.f;
 	float v = 0.f;
@@ -281,23 +302,19 @@ static void straightApproach(const float jerk_limit)
 	float worst_above_creep = -1e9f;
 	float ff_lost = 0.f;
 
-	for (int k = 0; k < 3000; ++k) {
+	for (int k = 0; k < 4000; ++k) {
 		if (k % 3 == 0) { // a new map every 60 ms
 			held_distance = wall_m - x;
-			held_cap = capAt(held_distance, kForward);
+			held_cap = capAt(held_distance, model);
 		}
 
-		const float dir[2] = {1.f, 0.f};
-		const float vel[2] = {v, 0.f};
-		const cp_brake::GeneratorBound b = cp_brake::generatorSpeedBound(openContext(), wall(0, held_cap, held_distance), vel,
-						   dir, 10.f, kForward, kSide, jerk_limit);
+		const float dir[2] = {sideways ? 0.f : 1.f, sideways ? 1.f : 0.f};
+		const float vel[2] = {dir[0] *v, dir[1] *v};
+		const cp_brake::GeneratorBounds b = cp_brake::generatorSpeedBounds(context, wall(sector, held_cap, held_distance),
+						    vel, dir, 10.f, kForward, kSide, jerk_limit);
 		// the generator's own top speed, reached smoothly as the PX4 drag does
-		float a_cmd = fminf(stick_acc, cp_brake::boundAcceleration(v, a, 10.f, 0.f, jerk_limit, 6.f, dt));
-
-		if (b.limited) {
-			a_cmd = fminf(a_cmd, cp_brake::boundAcceleration(v, a, b.speed_m_s, b.fall_per_m, b.jerk_m_s3, b.brake_m_s2, dt));
-		}
-
+		const float a_cmd = fminf(fminf(stick_acc, cp_brake::boundAcceleration(v, a, 10.f, 0.f, jerk_limit, 6.f, dt)),
+					  boundedAcceleration(b, v, a, dt));
 		const float step = jerk_limit * dt;
 		a = fmaxf(a - step, fminf(a + step, a_cmd));
 		v = fmaxf(v + a * dt, 0.f);
@@ -315,21 +332,24 @@ static void straightApproach(const float jerk_limit)
 		}
 	}
 
-	printf("JERK %.1f worst_above_creep %.3f worst %.3f ff_lost %.2f stop %.2f\n", (double)jerk_limit, (double)worst_above_creep, (double)worst,
-	       (double)ff_lost, (double)(wall_m - x));
-	EXPECT_LE(worst_above_creep, 1e-4f); // the hook does not cut while the vehicle moves
-	EXPECT_LE(worst, 0.005f);
-	EXPECT_LE(ff_lost, 0.2f); // what it clears at a creep is not felt
-	EXPECT_GE(wall_m - x, kForward.margin_m);
-	EXPECT_LT(v, 0.05f);
+	EXPECT_LE(worst_above_creep, 1e-4f) << "jerk " << jerk_limit << (sideways ? " sideways" : " ahead");
+	EXPECT_LE(worst, 0.005f) << "jerk " << jerk_limit;
+	EXPECT_LE(ff_lost, 0.2f) << "jerk " << jerk_limit; // what the hook clears at a creep is not felt
+	EXPECT_GE(wall_m - x, model.margin_m) << "jerk " << jerk_limit;
+	EXPECT_LT(v, 0.05f) << "jerk " << jerk_limit;
 }
 
 TEST(GeneratorBound, StraightApproachHookClearsNoFeltFeedForward)
 {
-	straightApproach(8.f); // MPC_JERK_MAX at bench
-	straightApproach(2.f); // PX4 jerk limits below, at and above CPB_JERK (4)
-	straightApproach(3.f);
-	straightApproach(4.f);
-	straightApproach(5.f);
-	straightApproach(6.f);
+	// PX4 jerk limits below, at and above CPB_JERK (4); 8 is the bench MPC_JERK_MAX
+	for (const float jerk : {2.f, 3.f, 4.f, 5.f, 6.f, 8.f}) {
+		approach(jerk, false);
+	}
+}
+
+TEST(GeneratorBound, SidewaysApproachUnderTheLockHookClearsNoFeltFeedForward)
+{
+	for (const float jerk : {2.f, 3.f, 4.f, 5.f, 6.f, 8.f}) {
+		approach(jerk, true);
+	}
 }

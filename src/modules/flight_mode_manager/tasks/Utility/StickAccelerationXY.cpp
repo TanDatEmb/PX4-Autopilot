@@ -141,19 +141,27 @@ void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, 
 				   stick_xy.unit_or_zero();
 
 	if (bound_dir.norm_squared() > 0.25f) {
-		const cp_brake::GeneratorBound bound = _cp_brake_bound.bound(bound_dir, _param_mpc_vel_manual.get(), yaw,
-						       _param_mpc_jerk_max.get());
+		const cp_brake::GeneratorBounds bounds = _cp_brake_bound.bound(bound_dir, _param_mpc_vel_manual.get(), yaw,
+				_param_mpc_jerk_max.get());
+		const float closing = _velocity_setpoint.dot(bound_dir);
+		const float closing_acc = _acceleration_setpoint_prev.dot(bound_dir);
+		float along_max = INFINITY;
 
-		if (bound.limited) {
-			// bound.jerk_m_s3 is already no more than MPC_JERK_MAX, so applyJerkLimit can follow the approach law
-			const float along_max = cp_brake::boundAcceleration(_velocity_setpoint.dot(bound_dir),
-						_acceleration_setpoint_prev.dot(bound_dir), bound.speed_m_s, bound.fall_per_m, bound.jerk_m_s3,
-						bound.brake_m_s2, dt);
-			const float along = _acceleration_setpoint.dot(bound_dir);
+		// both laws act at once, the obstacle's (it may fall) and the lock's; their jerk is no more than MPC_JERK_MAX,
+		// so applyJerkLimit can follow either
+		const cp_brake::GeneratorBound both[2] {bounds.obstacle, bounds.lock};
 
-			if (along > along_max) {
-				_acceleration_setpoint += bound_dir * (along_max - along);
+		for (const cp_brake::GeneratorBound &bound : both) {
+			if (bound.limited) {
+				along_max = math::min(along_max, cp_brake::boundAcceleration(closing, closing_acc, bound.speed_m_s,
+						      bound.fall_per_m, bound.jerk_m_s3, bound.brake_m_s2, dt));
 			}
+		}
+
+		const float along = _acceleration_setpoint.dot(bound_dir);
+
+		if (along > along_max) {
+			_acceleration_setpoint += bound_dir * (along_max - along);
 		}
 	}
 
