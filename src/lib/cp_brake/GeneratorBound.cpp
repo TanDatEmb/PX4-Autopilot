@@ -58,7 +58,9 @@ GeneratorBound generatorSpeedBound(const HookContext &context, const HookConstra
 	// that is still above the top speed must be seen while the generator accelerates toward it, or it is found
 	// only when it drops below, with the full acceleration still to ramp down.
 	const float probe_m_s = fmaxf(speed_max_m_s, fmaxf(forward.max_speed_m_s, side.max_speed_m_s));
-	float vel_sp[2] = {dir_ned[0] * probe_m_s, dir_ned[1] * probe_m_s};
+	float vel_sp[2];
+	vel_sp[0] = probe_m_s * dir_ned[0];
+	vel_sp[1] = probe_m_s * dir_ned[1];
 	float acc_sp[2] = {NAN, NAN};
 	const HookResult result = limitHorizontalSetpoint(context, constraint, vel_ned_m_s, vel_sp, acc_sp);
 	const float allowed = sqrtf(vel_sp[0] * vel_sp[0] + vel_sp[1] * vel_sp[1]);

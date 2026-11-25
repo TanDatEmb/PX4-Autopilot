@@ -33,11 +33,13 @@
 
 px4_add_library(FlightTaskUtility
 	StickAccelerationXY.cpp
+	CpBrakeBound.cpp
 	StickTiltXY.cpp
 	Gimbal.cpp
 )
 
-target_link_libraries(FlightTaskUtility PUBLIC FlightTask hysteresis SlewRate Sticks motion_planning mathlib)
+target_link_libraries(FlightTaskUtility PUBLIC FlightTask hysteresis SlewRate Sticks motion_planning mathlib cp_brake_model)
 target_include_directories(FlightTaskUtility PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 px4_add_functional_gtest(SRC StickTiltXYTest.cpp LINKLIBS FlightTaskUtility)
+px4_add_functional_gtest(SRC StickAccelerationXYTest.cpp LINKLIBS FlightTaskUtility CollisionPrevention)

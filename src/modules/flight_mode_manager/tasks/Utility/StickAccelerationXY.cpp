@@ -134,6 +134,28 @@ void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, 
 
 	_acceleration_setpoint -= drag;
 
+	// ADR 0026: keep the velocity within the cp_brake caps here, before integration, so the hook downstream (the
+	// backstop) does not have to cut it. Only the acceleration along the motion is bounded; at hover the stick
+	// gives the direction. The perpendicular part, the drag and the release braking stay as PX4 makes them.
+	const Vector2f bound_dir = (_velocity_setpoint.norm_squared() > 1e-4f) ? _velocity_setpoint.unit_or_zero() :
+				   stick_xy.unit_or_zero();
+
+	if (bound_dir.norm_squared() > 0.25f) {
+		const cp_brake::GeneratorBound bound = _cp_brake_bound.bound(bound_dir, _velocity_setpoint,
+						       _param_mpc_vel_manual.get(), yaw);
+
+		if (bound.limited) {
+			const float jerk = math::min(bound.jerk_m_s3, _param_mpc_jerk_max.get()); // followable by applyJerkLimit
+			const float along_max = cp_brake::boundAcceleration(_velocity_setpoint.dot(bound_dir), bound.speed_m_s, jerk,
+						bound.brake_m_s2, dt);
+			const float along = _acceleration_setpoint.dot(bound_dir);
+
+			if (along > along_max) {
+				_acceleration_setpoint += bound_dir * (along_max - along);
+			}
+		}
+	}
+
 	applyJerkLimit(dt);
 	applyTiltLimit(_acceleration_setpoint);
 
