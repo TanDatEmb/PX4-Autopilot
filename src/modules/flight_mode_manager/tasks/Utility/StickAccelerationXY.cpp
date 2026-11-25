@@ -141,11 +141,13 @@ void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, 
 				   stick_xy.unit_or_zero();
 
 	if (bound_dir.norm_squared() > 0.25f) {
-		const cp_brake::GeneratorBound bound = _cp_brake_bound.bound(bound_dir, _param_mpc_vel_manual.get(), yaw);
+		const cp_brake::GeneratorBound bound = _cp_brake_bound.bound(bound_dir, _param_mpc_vel_manual.get(), yaw,
+						       _param_mpc_jerk_max.get());
 
 		if (bound.limited) {
-			const float jerk = math::min(bound.jerk_m_s3, _param_mpc_jerk_max.get()); // followable by applyJerkLimit
-			const float along_max = cp_brake::boundAcceleration(_velocity_setpoint.dot(bound_dir), bound.speed_m_s, jerk,
+			// bound.jerk_m_s3 is already no more than MPC_JERK_MAX, so applyJerkLimit can follow the approach law
+			const float along_max = cp_brake::boundAcceleration(_velocity_setpoint.dot(bound_dir),
+						_acceleration_setpoint_prev.dot(bound_dir), bound.speed_m_s, bound.fall_per_m, bound.jerk_m_s3,
 						bound.brake_m_s2, dt);
 			const float along = _acceleration_setpoint.dot(bound_dir);
 

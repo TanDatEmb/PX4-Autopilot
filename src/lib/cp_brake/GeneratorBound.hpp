@@ -51,30 +51,35 @@ struct GeneratorBound {
 	bool limited;      ///< false: nothing bounds the direction, speed_m_s is the generator's own fastest speed
 	float speed_m_s;   ///< highest speed the generator may have along the direction [m/s], >= 0
 	float brake_m_s2;  ///< braking acceleration of the class that binds [m/s^2], valid when limited
-	float jerk_m_s3;   ///< braking jerk of the class that binds [m/s^3], valid when limited
+	float jerk_m_s3;   ///< jerk to follow the bound with [m/s^3]: the class jerk or a lower generator limit, valid when limited
+	float fall_per_m;  ///< [(m/s)/m] how much the bound falls per metre closed on its obstacle, 0 for the lock or none
 };
 
 /**
  * Speed bound along the unit direction dir (local NED) for a generator whose fastest speed is speed_max_m_s.
  *
  * It is the speed the hook would let through in that direction (limitHorizontalSetpoint, same context, constraint
- * and current velocity, probed at the highest cap speed so that a bound above the top speed is reported too),
+ * and current velocity, probed above every cap so that a bound above the top speed or saturated is reported too),
  * lowered by a lag margin when an obstacle sector binds. A generator that brakes with a limited jerk lags a falling
  * cap by rate^2 / (2 J), rate being how fast the cap falls while the vehicle moves at the bound; the margin is twice
  * that, so the generator settles that far under the cap instead of on it, where the hook would cut. The speed lock
  * does not fall and has no margin. A constraint the hook turns into a safe stop gives 0. Braking uses the stopping
- * model of the class of the sector that binds (forward or side, ADR 0026).
+ * model of the class of the sector that binds (forward or side, ADR 0026). follower_jerk_m_s3 is the generator's own
+ * jerk limit: when it is below the class jerk the generator follows with it, and the margin is sized with it.
  */
 GeneratorBound generatorSpeedBound(const HookContext &context, const HookConstraint &constraint,
 				   const float vel_ned_m_s[2], const float dir_ned[2], float speed_max_m_s,
-				   const StoppingParams &forward, const StoppingParams &side);
+				   const StoppingParams &forward, const StoppingParams &side, float follower_jerk_m_s3);
 
 /**
- * Highest acceleration along the bound direction for a generator at speed_m_s that integrates over dt_s: below the
- * bound, what a ramp down at jerk_m_s3 can still bring to zero exactly at the bound, and never more than one step
- * of dt_s can take without crossing it; above it, a braking acceleration of the same form, never harder than
- * brake_m_s2.
+ * Highest acceleration along the bound direction for a generator at speed_m_s and acceleration accel_m_s2 that
+ * integrates over dt_s, toward a bound that falls by fall_per_m per metre closed (GeneratorBound::fall_per_m), so at
+ * speed_m_s * fall_per_m. Below the bound: what a ramp at jerk_m_s3 can still bring to the bound's own rate exactly
+ * when the speed meets it (the fall grows with the generator's own acceleration, which uses fall_per_m * accel of the
+ * jerk), and never more than one step can take; above it, a braking acceleration of the same form. Never a
+ * deceleration harder than brake_m_s2.
  */
-float boundAcceleration(float speed_m_s, float bound_m_s, float jerk_m_s3, float brake_m_s2, float dt_s);
+float boundAcceleration(float speed_m_s, float accel_m_s2, float bound_m_s, float fall_per_m, float jerk_m_s3,
+			float brake_m_s2, float dt_s);
 
 } // namespace cp_brake

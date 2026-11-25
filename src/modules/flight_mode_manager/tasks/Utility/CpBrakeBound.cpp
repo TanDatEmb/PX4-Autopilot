@@ -40,7 +40,8 @@ CpBrakeBound::CpBrakeBound(ModuleParams *parent) :
 {
 }
 
-cp_brake::GeneratorBound CpBrakeBound::bound(const matrix::Vector2f &dir, const float speed_max_m_s, const float yaw_rad)
+cp_brake::GeneratorBound CpBrakeBound::bound(const matrix::Vector2f &dir, const float speed_max_m_s, const float yaw_rad,
+		const float jerk_max_m_s3)
 {
 	// the copy is field by field, as MulticopterPositionControl::updateCollisionLimiter does for the hook
 	if (_constraints_sub.update(&_constraints)) {
@@ -82,5 +83,5 @@ cp_brake::GeneratorBound CpBrakeBound::bound(const matrix::Vector2f &dir, const 
 	const vehicle_local_position_s &lpos = _local_position_sub.get();
 	const float vel[2] = {lpos.v_xy_valid ? lpos.vx : NAN, lpos.v_xy_valid ? lpos.vy : NAN};
 	const float direction[2] = {dir(0), dir(1)};
-	return cp_brake::generatorSpeedBound(context, _constraint, vel, direction, speed_max_m_s, forward, side);
+	return cp_brake::generatorSpeedBound(context, _constraint, vel, direction, speed_max_m_s, forward, side, jerk_max_m_s3);
 }

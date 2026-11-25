@@ -57,9 +57,9 @@ public:
 
 	/**
 	 * Speed bound along the unit direction dir (local NED) for a generator whose fastest speed is speed_max_m_s, heading
-	 * yaw_rad. The current velocity the rule needs is the measured one, as in the hook.
+	 * yaw_rad and jerk limit jerk_max_m_s3. The current velocity the rule needs is the measured one, as in the hook.
 	 */
-	cp_brake::GeneratorBound bound(const matrix::Vector2f &dir, float speed_max_m_s, float yaw_rad);
+	cp_brake::GeneratorBound bound(const matrix::Vector2f &dir, float speed_max_m_s, float yaw_rad, float jerk_max_m_s3);
 
 private:
 	// members, not locals: this runs deep in the flight-task call chain, on a small work-queue stack
