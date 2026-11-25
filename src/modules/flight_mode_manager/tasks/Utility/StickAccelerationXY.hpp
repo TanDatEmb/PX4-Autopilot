@@ -47,6 +47,7 @@
 #include <uORB/topics/takeoff_status.h>
 
 #include "SlewRate.hpp"
+#include "CpBrakeBound.hpp"
 
 class StickAccelerationXY : public ModuleParams
 {
@@ -71,6 +72,7 @@ public:
 
 private:
 	CollisionPrevention _collision_prevention{this};
+	CpBrakeBound _cp_brake_bound{this}; ///< keeps the velocity within the cp_brake caps (ADR 0026)
 
 	void applyJerkLimit(const float dt);
 	matrix::Vector2f calculateDrag(matrix::Vector2f drag_coefficient, const float dt, const matrix::Vector2f &stick_xy,
