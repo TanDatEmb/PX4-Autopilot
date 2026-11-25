@@ -56,6 +56,7 @@ static_assert(cp_brake::kReasonTimeSync == cp_brake_constraints_s::REASON_TIME_S
 static_assert(cp_brake::kReasonConstraintStale == cp_brake_constraints_s::REASON_CONSTRAINT_STALE, "reason flag");
 static_assert(cp_brake::kReasonConstraintMalformed == cp_brake_constraints_s::REASON_CONSTRAINT_MALFORMED, "reason flag");
 static_assert(cp_brake::kReasonNavState == cp_brake_constraints_s::REASON_NAV_STATE, "reason flag");
+static_assert(cp_brake::kReasonUnclaimedDirection == cp_brake_constraints_s::REASON_UNCLAIMED_DIRECTION, "reason flag");
 static_assert(cp_brake::kStateDisabled == cp_brake_constraints_s::STATE_DISABLED, "state");
 static_assert(cp_brake::kStateObserverOnly == cp_brake_constraints_s::STATE_OBSERVER_ONLY, "state");
 static_assert(cp_brake::kStateNotReady == cp_brake_constraints_s::STATE_NOT_READY, "state");
@@ -136,6 +137,11 @@ void CpBrake::updateConfig()
 
 	_config.stopping = cp_brake::StoppingParams{_param_cpb_a_brk.get(), _param_cpb_jerk.get(), _param_cpb_t_lat.get(),
 			_param_cpb_margin.get(), _param_cpb_max_v.get()};
+	// the side class is the same model with its own braking acceleration (SYS-CP-028)
+	_config.stopping_side = _config.stopping;
+	_config.stopping_side.a_brake_m_s2 = _param_cpb_a_side.get();
+	_config.side_speed_m_s = _param_cpb_v_side.get();
+	_config.unclaimed_start_deg = _param_cpb_rear_ang.get();
 	_config.limiter = cp_brake::LimiterParams{_param_cpb_clr_t.get(), _param_cpb_rise.get()};
 	_config.sample_age_stop_s = _param_cpb_age_stop.get();
 	_config.constraint_age_limit_s = _param_cpb_cstr_age.get();
@@ -294,7 +300,8 @@ void CpBrake::process(const obstacle_distance_s &input)
 						    static_cast<float>(static_cast<int64_t>(now) - static_cast<int64_t>(input.timestamp)) * 1e-6f,
 						    _config.decel_bound_m_s2};
 		_map_travel_usable = cp_brake::rawSectorCaps(input.distances, input.min_distance, input.max_distance, travel,
-				     _config.stopping, _raw_caps, _sector_valid);
+				     _config.stopping, _config.stopping_side, _config.unclaimed_start_deg, _config.side_speed_m_s,
+				     _raw_caps, _sector_valid);
 
 		if (!_time_sync_good) {
 			// a map whose time alignment is not good is not used: every sector is unknown, never free
@@ -335,7 +342,8 @@ void CpBrake::tightenHeldMap()
 					    _config.decel_bound_m_s2};
 	cp_brake::SectorCaps caps;
 	cp_brake::SectorFlags valid;
-	cp_brake::rawSectorCaps(_held_distances_cm, _held_min_cm, _held_max_cm, travel, _config.stopping, caps, valid);
+	cp_brake::rawSectorCaps(_held_distances_cm, _held_min_cm, _held_max_cm, travel, _config.stopping,
+				_config.stopping_side, _config.unclaimed_start_deg, _config.side_speed_m_s, caps, valid);
 	_limiter.tighten(caps);
 }
 
@@ -409,8 +417,11 @@ void CpBrake::evaluate()
 
 	for (std::size_t i = 0; i < cp_brake::kSectorCount; ++i) {
 		constraints.caps_m_s[i] = result.constraint_valid ? _limiter.caps()[i] : 0.f;
-		// the distance whose stopping speed is the published cap (ADR 0025): a cap of 0 gives the margin
-		constraints.distances_m[i] = cp_brake::stoppingDistance(constraints.caps_m_s[i], _config.stopping);
+		// the distance whose stopping speed is the published cap (ADR 0025), with the model of the sector's
+		// direction class: a cap of 0 gives the margin
+		const cp_brake::StoppingParams &stopping = (cp_brake::sectorBearingDeg(i) <= cp_brake::kForwardClassDeg)
+				? _config.stopping : _config.stopping_side;
+		constraints.distances_m[i] = cp_brake::stoppingDistance(constraints.caps_m_s[i], stopping);
 	}
 
 	constraints.clearance_m = _config.stopping.margin_m;

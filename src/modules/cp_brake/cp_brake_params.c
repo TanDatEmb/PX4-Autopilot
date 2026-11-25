@@ -71,6 +71,61 @@ PARAM_DEFINE_FLOAT(CPB_MAX_V, 12.f);
 PARAM_DEFINE_FLOAT(CPB_A_BRK, 3.f);
 
 /**
+ * Braking acceleration of the side class
+ *
+ * Stopping model of every sector whose centre is more than 45 degrees from the nose (SYS-CP-028);
+ * CPB_A_BRK is the forward class. It comes from the sensor mount: g tan of the angle between the
+ * horizon and the lower edge of the field of view toward the side, 1.2 m/s^2 for the X500 bench mount
+ * pitched 10 degrees down (approved 2026-11-22). Platform value: -1 means not set, and cp_brake reports
+ * an invalid configuration instead of running.
+ *
+ * @unit m/s^2
+ * @min -1
+ * @max 20
+ * @decimal 1
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_A_SIDE, -1.f);
+
+/**
+ * Speed lock outside the forward class
+ *
+ * While the velocity setpoint, or the velocity while faster than this, points more than 45 degrees from
+ * the nose, the horizontal speed is at most this value (SYS-CP-031 a). It limits the velocity vector,
+ * never a sector cap. Also the cap of an unclaimed sector with no evidence (CPB_REAR_ANG). 5 m/s for the
+ * X500 bench (PERF-01 Mission tier, approved 2026-11-22). Not above CPB_MAX_V. Platform value: -1 means
+ * not set, and cp_brake reports an invalid configuration instead of running.
+ *
+ * @unit m/s
+ * @min -1
+ * @max 30
+ * @decimal 1
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_V_SIDE, -1.f);
+
+/**
+ * Start of the unclaimed bearings
+ *
+ * Angle from the nose beyond which the horizon is never in the field of view at level, so obstacles
+ * below the sensor are not seen and the direction is outside the claim (SYS-CP-031 b): a sector there
+ * with no evidence has the cap CPB_V_SIDE instead of 0, and the hook reports the motion
+ * (REASON_UNCLAIMED_DIRECTION, for a setpoint faster than 0.2 m/s). The map's rear_start_rad, beyond
+ * which a sector needs only the upper half of the height band, is a separate value and must not be
+ * larger than this one.
+ * 134.6 degrees for the X500 bench mount pitched 10 degrees down (approved 2026-11-22); 180 leaves no
+ * unclaimed bearing. Above 45. Platform value: -1 means not set, and cp_brake reports an invalid
+ * configuration instead of running.
+ *
+ * @unit deg
+ * @min -1
+ * @max 180
+ * @decimal 1
+ * @group Collision Prevention Brake
+ */
+PARAM_DEFINE_FLOAT(CPB_REAR_ANG, -1.f);
+
+/**
  * Upper bound of the horizontal deceleration
  *
  * Used to allow for a vehicle that slowed down between the sample time of a map and its use (the

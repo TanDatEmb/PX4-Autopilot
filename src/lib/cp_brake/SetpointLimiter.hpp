@@ -61,6 +61,17 @@
  *   number makes the sector count (fail closed). When the speed is scaled the horizontal feed-forward
  *   acceleration is cleared (ADR 0020), otherwise it is unchanged; a feed-forward that is not finite
  *   stays as it is.
+ * - Speed lock of the side class (SYS-CP-031 a), in the same pass: when the setpoint, or the current
+ *   velocity while it is faster than CPB_V_SIDE, points more than kForwardClassDeg from the nose (the
+ *   current heading, not the one of the sample), the speed is at most CPB_V_SIDE. It scales the vector,
+ *   never a sector cap, so the forward class is not limited by it. When the lock sets the scale the
+ *   result is kLimited with no active sector. A heading that is not a usable number locks every
+ *   direction, and a lock speed that is not a usable number locks at 0 (fail closed).
+ * - Unclaimed direction (SYS-CP-031 b): when the setpoint, while faster than 0.2 m/s (below it the
+ *   direction is hover noise), or the current velocity while it is faster than CPB_V_SIDE, points more
+ *   than CPB_REAR_ANG from the nose, the result carries kReasonUnclaimedDirection (the pilot is told;
+ *   nothing more is limited by it). An angle that is not a usable number counts every direction outside
+ *   the forward class as unclaimed.
  */
 
 #pragma once
@@ -80,6 +91,9 @@ struct HookContext {
 	bool nav_state_enforced;       ///< the navigation state is Position or Mission
 	uint64_t now_us;               ///< the time at which the hook applies the constraint [us]
 	float constraint_age_limit_s;  ///< CPB_CSTR_AGE [s]; not a positive number means every constraint is stale
+	float heading_rad;             ///< current heading, FRD to NED yaw [rad], for the speed lock
+	float side_speed_m_s;          ///< CPB_V_SIDE [m/s]: speed lock outside the forward class
+	float unclaimed_start_deg;     ///< CPB_REAR_ANG [deg]: beyond it the direction is outside the claim
 };
 
 /** The latest cp_brake_constraints, as the hook needs it. The all-zero value is "none received". */

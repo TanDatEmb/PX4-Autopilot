@@ -96,8 +96,9 @@ public:
 private:
 	void Run() override;
 
-	/** Give the limiter hook (cp_brake) its inputs for this cycle: parameters, flight phase, navigation state, constraint. */
-	void updateCollisionLimiter(const bool flying);
+	/** Give the limiter hook (cp_brake) its inputs for this cycle: parameters, flight phase, navigation state,
+	 *  current heading [rad], constraint. */
+	void updateCollisionLimiter(const bool flying, const float heading_rad);
 
 	/** Publish what the hook did, at the time it applied the constraint (cp_brake_hook). */
 	void publishCollisionLimiterStatus();
@@ -150,8 +151,12 @@ private:
 	// CPB_EN there means a disabled hook.
 	param_t _param_cpb_en_handle{PARAM_INVALID};
 	param_t _param_cpb_cstr_age_handle{PARAM_INVALID};
+	param_t _param_cpb_v_side_handle{PARAM_INVALID};
+	param_t _param_cpb_rear_ang_handle{PARAM_INVALID};
 	int32_t _cpb_en{0};
 	float _cpb_cstr_age_s{-1.f};
+	float _cpb_v_side_m_s{-1.f};     ///< CPB_V_SIDE, the speed lock outside the forward class
+	float _cpb_rear_ang_deg{-1.f};   ///< CPB_REAR_ANG, the start of the unclaimed bearings
 	uint8_t _nav_state{vehicle_status_s::NAVIGATION_STATE_MANUAL};
 	cp_brake_constraints_s _cp_constraints{};          ///< the latest constraint, for the status
 	cp_brake_hook_s _cp_hook_message{};                ///< what the hook did, built here and not on the stack

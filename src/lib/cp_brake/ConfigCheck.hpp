@@ -63,7 +63,10 @@ struct ConfigInputs {
 	TimeSyncLimits time_sync_limits;  ///< limits of the time-alignment gate (OPEN-033)
 	bool time_sync_enabled;           ///< UXRCE_DDS_SYNCT is on, so timesync_status exists
 	bool time_sync_required;          ///< this build is a hardware one: ADR 0003 requires UXRCE_DDS_SYNCT=1
-	float decel_bound_m_s2;           ///< CPB_DECEL_MAX [m/s^2]: bound of the horizontal deceleration (ADR 0020 D4), > 0, not below the braking acceleration
+	float decel_bound_m_s2;           ///< CPB_DECEL_MAX [m/s^2]: bound of the horizontal deceleration (ADR 0020 D4), > 0, not below the braking acceleration of either class
+	StoppingParams stopping_side;     ///< the side class (SYS-CP-028): `stopping` with CPB_A_SIDE as the braking acceleration
+	float side_speed_m_s;             ///< CPB_V_SIDE [m/s] (SYS-CP-031): > 0 and not above CPB_MAX_V
+	float unclaimed_start_deg;        ///< CPB_REAR_ANG [deg] (SYS-CP-031 b): above kForwardClassDeg, at most 180
 };
 
 namespace ConfigFaults

@@ -42,7 +42,15 @@ uint32_t checkConfig(const ConfigInputs &inputs)
 {
 	uint32_t faults = 0U;
 
-	if (!isValid(inputs.stopping)) {
+	// the direction classes (SYS-CP-028, 031) belong to the stopping configuration: the side model, the
+	// speed lock (not above the model maximum) and the start of the unclaimed bearings (beyond the forward class)
+	const bool side_speed_valid = std::isfinite(inputs.side_speed_m_s) && inputs.side_speed_m_s > 0.f
+				      && std::isfinite(inputs.stopping.max_speed_m_s)
+				      && inputs.side_speed_m_s <= inputs.stopping.max_speed_m_s;
+	const bool unclaimed_start_valid = std::isfinite(inputs.unclaimed_start_deg)
+					   && inputs.unclaimed_start_deg > kForwardClassDeg && inputs.unclaimed_start_deg <= 180.f;
+
+	if (!isValid(inputs.stopping) || !isValid(inputs.stopping_side) || !side_speed_valid || !unclaimed_start_valid) {
 		faults |= ConfigFaults::kStoppingParams;
 	}
 
@@ -88,10 +96,11 @@ uint32_t checkConfig(const ConfigInputs &inputs)
 	}
 
 	// ADR 0020 D4: the bound on the horizontal deceleration has no approved value (a sentinel fails), and
-	// it is not smaller than the braking acceleration of the model. A comparison that is false for a
+	// it is not smaller than the braking acceleration of either class. A comparison that is false for a
 	// non-finite braking acceleration also fails, which is already a stopping-parameter fault.
 	if (!std::isfinite(inputs.decel_bound_m_s2) || inputs.decel_bound_m_s2 <= 0.f
-	    || !(inputs.decel_bound_m_s2 >= inputs.stopping.a_brake_m_s2)) {
+	    || !(inputs.decel_bound_m_s2 >= inputs.stopping.a_brake_m_s2)
+	    || !(inputs.decel_bound_m_s2 >= inputs.stopping_side.a_brake_m_s2)) {
 		faults |= ConfigFaults::kDecelBound;
 	}
 

@@ -51,6 +51,18 @@ namespace cp_brake
 constexpr std::size_t kSectorCount{72};
 
 /**
+ * Half-angle of the forward direction class around the nose [deg] (SYS-CP-028, owner 2026-11-23): the
+ * definition of the class in the requirement, not a tuning value. The bound is part of the class.
+ */
+constexpr float kForwardClassDeg{45.f};
+
+/** Angle between the centre of a sector (0 forward, clockwise, 5 degrees each) and the nose, 0 to 180 [deg]. */
+constexpr float sectorBearingDeg(std::size_t sector)
+{
+	return 5.f * static_cast<float>(sector <= kSectorCount / 2U ? sector : kSectorCount - sector);
+}
+
+/**
  * One value per sector. Not std::array: the NuttX builds of PX4 have no <array>, and this library
  * is built for them.
  */
