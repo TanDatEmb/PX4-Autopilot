@@ -24,6 +24,15 @@ publications:
     type: px4_msgs::msg::CollisionConstraints
     rate_limit: 50.
 
+  # Collision-prevention monitor telemetry. The ROS package mirrors the PX4 uORB layout.
+  - topic: /fmu/out/cp_brake_constraints
+    type: collision_prevention_msgs::msg::CpBrakeConstraints
+    rate_limit: 20.
+
+  - topic: /fmu/out/cp_brake_hook
+    type: collision_prevention_msgs::msg::CpBrakeHook
+    rate_limit: 20.
+
   - topic: /fmu/out/estimator_status_flags
     type: px4_msgs::msg::EstimatorStatusFlags
     rate_limit: 5.

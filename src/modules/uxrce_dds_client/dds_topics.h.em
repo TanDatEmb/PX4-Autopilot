@@ -34,7 +34,9 @@ import os
 
 typedef bool (*UcdrSerializeMethod)(const void* data, ucdrBuffer& buf, int64_t time_offset);
 
-static constexpr int max_topic_size = 512;
+// cp_brake_constraints_s is 608 bytes on the pinned PX4 tree. Keep headroom for CDR padding and
+// future monitor fields instead of silently dropping the topic at the old 512-byte ceiling.
+static constexpr int max_topic_size = 768;
 @[    for pub in publications]@
 static_assert(sizeof(@(pub['simple_base_type'])_s) <= max_topic_size, "topic too large, increase max_topic_size");
 @[    end for]@
